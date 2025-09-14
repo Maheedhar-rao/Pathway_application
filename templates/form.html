@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Harvest Lending X Pathway Catalyst — Application Form</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <header class="pc-header">
+    <div class="brand">
+      <span class="badge">Harvest Lending X Pathway Catalyst</span>
+      <h1>Business Financing Application</h1>
+    </div>
+  </header>
+
+  <main class="container">
+    {% if errors %}
+    <div class="card" id="errorSummary" style="border-color:#f87171">
+      <div class="card-header"><h2>Fix the highlighted fields</h2></div>
+    </div>
+    {% endif %}
+
+    <form class="card" action="{{ url_for('submit') }}" method="POST" enctype="multipart/form-data">
+      <div class="card-header">
+        <h2>Applicant Details</h2>
+        <span class="pill">Draft</span>
+      </div>
+
+      <div class="card-body">
+        <!-- Business Information -->
+        <div class="section-title"><span class="dot"></span><h3>Business Information</h3></div>
+        <div class="grid cols-2">
+          <div class="field"><label>Business Legal Name</label><input name="business_legal_name" value="{{ (form.get('business_legal_name') if form else '') }}" required></div>
+          <div class="field"><label>Business D/B/A Name</label><input name="business_dba" value="{{ (form.get('business_dba') if form else '') }}"></div>
+          <div class="field"><label>Industry</label><input name="industry" placeholder="e.g., Home Construction" value="{{ (form.get('industry') if form else '') }}" required></div>
+          <div class="field"><label>Legal Entity</label>
+            <select name="legal_entity" required>
+              <option value="">Select entity type</option>
+              <option {% if form and form.get('legal_entity')=='Sole Proprietorship' %}selected{% endif %}>Sole Proprietorship</option>
+              <option {% if form and form.get('legal_entity')=='LLC' %}selected{% endif %}>LLC</option>
+              <option {% if form and form.get('legal_entity')=='Corporation (C)' %}selected{% endif %}>Corporation (C)</option>
+              <option {% if form and form.get('legal_entity')=='Corporation (S)' %}selected{% endif %}>Corporation (S)</option>
+              <option {% if form and form.get('legal_entity')=='Partnership' %}selected{% endif %}>Partnership</option>
+              <option {% if form and form.get('legal_entity')=='Nonprofit' %}selected{% endif %}>Nonprofit</option>
+            </select>
+          </div>
+          <div class="field"><label>Business Start Date</label><input type="date" name="business_start_date" value="{{ (form.get('business_start_date') if form else '') }}" required></div>
+          <div class="field"><label>EIN</label><input name="ein" placeholder="12-3456789" value="{{ (form.get('ein') if form else '') }}" required></div>
+        </div>
+
+        <div class="grid cols-3" style="margin-top:12px">
+          <div class="field"><label>Company Address</label><input name="company_address1" list="addr_suggestions" autocomplete="street-address" value="{{ (form.get('company_address1') if form else '') }}" required></div>
+          <div class="field"><label>&nbsp;</label><input name="company_address2" placeholder="Suite / Apt" value="{{ (form.get('company_address2') if form else '') }}"></div>
+          <div class="field"><label>City</label><input name="company_city" autocomplete="address-level2" value="{{ (form.get('company_city') if form else '') }}" required></div>
+          <div class="field"><label>State</label><input name="company_state" autocomplete="address-level1" value="{{ (form.get('company_state') if form else '') }}" required></div>
+          <div class="field"><label>ZIP</label><input name="company_zip" autocomplete="postal-code" value="{{ (form.get('company_zip') if form else '') }}" required></div>
+          <div class="field"><label>Country</label><input name="company_country" value="{{ (form.get('company_country') if form else 'United States') }}"></div>
+        </div>
+
+        <div class="grid cols-3" style="margin-top:12px">
+          <div class="field"><label>Business Phone</label><input name="business_phone" value="{{ (form.get('business_phone') if form else '') }}"></div>
+          <div class="field"><label>Requested Loan Amount</label><input type="number" name="loan_amount" min="0" step="100" value="{{ (form.get('loan_amount') if form else '') }}" required></div>
+          <div class="field"><label>Loan Purpose</label><input name="loan_purpose" placeholder="e.g., Working capital, equipment" value="{{ (form.get('loan_purpose') if form else '') }}"></div>
+        </div>
+
+        <!-- Owner Information -->
+        <div class="section-title"><span class="dot"></span><h3>Owner Information</h3></div>
+        <div id="owners">
+          <div class="grid cols-3">
+            <div class="field"><label>Owner First Name</label><input name="owner_0_first" value="{{ (form.get('owner_0_first') if form else '') }}" required></div>
+            <div class="field"><label>Owner Last Name</label><input name="owner_0_last" value="{{ (form.get('owner_0_last') if form else '') }}" required></div>
+            <div class="field"><label>Ownership %</label><input type="number" name="owner_0_pct" min="0" max="100" step="0.1" value="{{ (form.get('owner_0_pct') if form else '') }}" required></div>
+          </div>
+          <div class="grid cols-3" style="margin-top:12px">
+            <div class="field"><label>DOB</label><input type="date" name="owner_0_dob" value="{{ (form.get('owner_0_dob') if form else '') }}" required></div>
+            <div class="field"><label>SSN</label><input name="owner_0_ssn" placeholder="123-45-6789" value="{{ (form.get('owner_0_ssn') if form else '') }}" required></div>
+            <div class="field"><label>Email</label><input type="email" name="owner_0_email" value="{{ (form.get('owner_0_email') if form else '') }}" required></div>
+          </div>
+          <div class="grid cols-3" style="margin-top:12px">
+            <div class="field"><label>Mobile</label><input name="owner_0_mobile" placeholder="(555) 555-5555" value="{{ (form.get('owner_0_mobile') if form else '') }}" required></div>
+            <div class="field"><label>Home Address</label><input name="owner_0_addr1" list="addr_suggestions" autocomplete="street-address" value="{{ (form.get('owner_0_addr1') if form else '') }}" required></div>
+            <div class="field"><label>&nbsp;</label><input name="owner_0_addr2" placeholder="Suite / Apt" value="{{ (form.get('owner_0_addr2') if form else '') }}"></div>
+            <div class="field"><label>City</label><input name="owner_0_city" autocomplete="address-level2" value="{{ (form.get('owner_0_city') if form else '') }}" required></div>
+            <div class="field"><label>State</label><input name="owner_0_state" autocomplete="address-level1" value="{{ (form.get('owner_0_state') if form else '') }}" required></div>
+            <div class="field"><label>ZIP</label><input name="owner_0_zip" autocomplete="postal-code" value="{{ (form.get('owner_0_zip') if form else '') }}" required></div>
+            <div class="field"><label>Country</label><input name="owner_0_country" value="{{ (form.get('owner_0_country') if form else 'United States') }}"></div>
+          </div>
+        </div>
+
+        <!-- Property & Location -->
+        <div class="section-title"><span class="dot"></span><h3>Property & Location</h3></div>
+
+        <!-- Always-visible: Own Real Estate? -->
+        <div class="grid cols-3">
+          <div class="field"><label>Own Real Estate?</label>
+            <select name="own_real_estate" required>
+              <option value="">Select</option>
+              <option {% if form and form.get('own_real_estate')=='Yes' %}selected{% endif %}>Yes</option>
+              <option {% if form and form.get('own_real_estate')=='No' %}selected{% endif %}>No</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Conditionally visible: Residence & Business Location -->
+        <div class="grid cols-3" id="tenureSection">
+          <br>
+          <br>
+          <div class="field"><label>Residence</label>
+            <div class="inline">
+              <label class="inline"><input type="radio" name="residence_tenure" value="Own"  {% if form and form.get('residence_tenure')=='Own' %}checked{% endif %}> Own</label>
+              <label class="inline"><input type="radio" name="residence_tenure" value="Rent" {% if form and form.get('residence_tenure')=='Rent' %}checked{% endif %}> Rent</label>
+            </div>
+          </div>
+          <div class="field"><label>Business Location</label>
+            <div class="inline">
+              <label class="inline"><input type="radio" name="business_location_tenure" value="Own"  {% if form and form.get('business_location_tenure')=='Own' %}checked{% endif %}> Own</label>
+              <label class="inline"><input type="radio" name="business_location_tenure" value="Rent" {% if form and form.get('business_location_tenure')=='Rent' %}checked{% endif %}> Rent</label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Uploads -->
+        <div class="section-title"><span class="dot"></span><h3>Upload Bank Statements</h3></div>
+        <div class="uploader">
+          <p>Upload PDFs (you can select multiple)</p>
+          <input id="bank_files" name="bank_files" type="file" accept="application/pdf" multiple />
+        </div>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="btn primary">Submit Application</button>
+      </div>
+    </form>
+
+    <datalist id="addr_suggestions"></datalist>
+  </main>
+
+  <script src="{{ url_for('static', filename='form.js') }}"></script>
+  <script>
+    // Show/hide Residence & Business Location based on Own Real Estate
+    (function(){
+      const ownSel = document.querySelector('select[name="own_real_estate"]');
+      const section = document.getElementById('tenureSection');
+      const inputs = section ? section.querySelectorAll('input[name="residence_tenure"], input[name="business_location_tenure"]') : [];
+      function update(){
+        const show = ownSel && ownSel.value === 'Yes';
+        if(section){ section.style.display = show ? '' : 'none'; }
+        inputs.forEach(i => { i.disabled = !show; if(!show) i.checked = false; });
+      }
+      if(ownSel){ ownSel.addEventListener('change', update); update(); }
+    })();
+  </script>
+</body>
+</html>
