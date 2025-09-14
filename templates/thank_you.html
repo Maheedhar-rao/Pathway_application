@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Thank You — Next Steps</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <header class="pc-header">
+    <div class="brand"><span class="badge">Harvest Lending X Pathway Catalyst</span></div>
+    <p class="lead">Your application{% if business %} for <strong>{{ business }}</strong>{% endif %} was received. Upload your <strong>Voided Check</strong> and <strong>ID</strong> below (optional).</p>
+  </header>
+
+  <main class="container">
+    <div class="card">
+      <div class="card-header" style="display:flex; justify-content:center; text-align:center;"><h1>Thank You</h1>
+      </div>
+      <div class="card-header"><h2>Upload Additional Documents</h2></div>
+      <div class="card-body">
+        {% if uploaded %}<div class="pill">✅ Uploaded: {{ ', '.join(uploaded) }}</div>{% endif %}
+        <form action="{{ url_for('upload_docs') }}" method="POST" enctype="multipart/form-data" class="grid cols-2">
+          <input type="hidden" name="sid" value="{{ sid or '' }}"/>
+          <div class="field"><label>Voided Check (PDF/JPG/PNG)</label><input type="file" name="voided_check" accept="application/pdf,image/*" /></div>
+          <div class="field"><label>Owner ID (PDF/JPG/PNG)</label><input type="file" name="id_doc" accept="application/pdf,image/*" /></div>
+          <div class="actions" style="grid-column:1/-1"><button class="btn primary" type="submit">Upload</button></div>
+        </form>
+        <p class="lead" style="margin-top:14px">We’ll notify you if anything else is needed.</p>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // Prevent navigating back to a stale form page after successful submit
+    try {
+      history.pushState(null, '', location.href);
+      window.addEventListener('popstate', function () { history.go(1); });
+    } catch(e){}
+  </script>
+</body>
+</html>
