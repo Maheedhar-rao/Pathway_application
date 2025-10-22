@@ -100,8 +100,8 @@
           <div class="field"><label>Own Real Estate?</label>
             <select name="own_real_estate" required>
               <option value="">Select</option>
-              <option {% if form and form.get('own_real_estate')=='Yes' %}selected{% endif %}>Yes</option>
-              <option {% if form and form.get('own_real_estate')=='No' %}selected{% endif %}>No</option>
+              <option value="Yes" {% if form and form.get('own_real_estate')=='Yes' %}selected{% endif %}>Yes</option>
+              <option value="No" {% if form and form.get('own_real_estate')=='No' %}selected{% endif %}>No</option>
             </select>
           </div>
         </div>
@@ -144,16 +144,40 @@
   <script>
     // Show/hide Residence & Business Location based on Own Real Estate
     (function(){
-      const ownSel = document.querySelector('select[name="own_real_estate"]');
-      const section = document.getElementById('tenureSection');
-      const inputs = section ? section.querySelectorAll('input[name="residence_tenure"], input[name="business_location_tenure"]') : [];
-      function update(){
-        const show = ownSel && ownSel.value === 'Yes';
-        if(section){ section.style.display = show ? '' : 'none'; }
-        inputs.forEach(i => { i.disabled = !show; if(!show) i.checked = false; });
+    const ownSel  = document.querySelector('select[name="own_real_estate"]');
+    const section = document.getElementById('tenureSection');
+    if (!ownSel || !section) return;
+
+    const inputs = section.querySelectorAll(
+      'input[name="residence_tenure"], input[name="business_location_tenure"]'
+    );
+
+    function update() {
+      const show = ownSel.value === 'Yes';
+      if (show) {
+        section.style.display = 'grid'; // important: force grid back
+      } else {
+        section.style.display = 'none';
+        inputs.forEach(i => { i.disabled = true; i.checked = false; });
       }
-      if(ownSel){ ownSel.addEventListener('change', update); update(); }
-      })();
+      if (show) inputs.forEach(i => i.disabled = false);
+    }
+
+    // React to user changes
+    ownSel.addEventListener('change', update);
+
+    // Initialize once DOM is ready (handles server-filled values)
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', update);
+    } else {
+      update();
+    }
+
+    // Also re-run if page is restored from BFCache (mobile Safari/Firefox)
+    window.addEventListener('pageshow', function(e){
+      if (e.persisted) update();
+    });
+  })();
       function () {
       const form = document.getElementById('appForm');
       if (!form) return;
