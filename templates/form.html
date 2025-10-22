@@ -153,6 +153,7 @@
         inputs.forEach(i => { i.disabled = !show; if(!show) i.checked = false; });
       }
       if(ownSel){ ownSel.addEventListener('change', update); update(); }
+      })();
       function () {
       const form = document.getElementById('appForm');
       if (!form) return;
