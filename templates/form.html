@@ -23,8 +23,9 @@
       <div class="card-header"><h2>Fix the highlighted fields</h2></div>
     </div>
     {% endif %}
-
-    <form class="card" action="{{ url_for('submit') }}" method="POST" enctype="multipart/form-data">
+    
+    <form id="appForm" class="card" action="{{ url_for('submit') }}" method="POST" enctype="multipart/form-data" autocomplete="off">
+    <!--<form class="card" action="{{ url_for('submit') }}" method="POST" enctype="multipart/form-data">-->
       <div class="card-header">
         <h2>Applicant Details</h2>
         <span class="pill">Draft</span>
@@ -152,6 +153,34 @@
         inputs.forEach(i => { i.disabled = !show; if(!show) i.checked = false; });
       }
       if(ownSel){ ownSel.addEventListener('change', update); update(); }
+      function () {
+      const form = document.getElementById('appForm');
+      if (!form) return;
+
+      const hasErrors = {{ 'true' if errors else 'false' }};
+
+      function shouldResetOnLoad() {
+        if (hasErrors) return false; // keep values visible when showing validation errors
+        try {
+          const nav = performance.getEntriesByType('navigation')[0];
+          if (!nav) return true;
+          return (nav.type === 'reload' || nav.type === 'back_forward');
+        } catch (_) {
+          return performance && performance.navigation && performance.navigation.type === 1;
+        }
+      }
+
+      window.addEventListener('pageshow', function (e) {
+        if (!hasErrors && e.persisted) form.reset();
+      });
+
+      if (shouldResetOnLoad()) {
+        form.reset();
+      }
+
+      window.addEventListener('beforeunload', function () {
+        try { form.reset(); } catch (_) {}
+      });
     })();
   </script>
 </body>
