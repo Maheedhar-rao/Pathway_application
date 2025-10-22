@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta http-equiv="Cache-Control" content="no-store" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Harvest Lending X Pathway Catalyst — Application Form</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
 </head>
 <body>
   <header class="pc-header">
@@ -23,9 +24,14 @@
       <div class="card-header"><h2>Fix the highlighted fields</h2></div>
     </div>
     {% endif %}
-    
-    <form id="appForm" class="card" action="{{ url_for('submit') }}" method="POST" enctype="multipart/form-data" autocomplete="off">
-    <!--<form class="card" action="{{ url_for('submit') }}" method="POST" enctype="multipart/form-data">-->
+
+    <!-- Form -->
+    <form id="appForm"
+          class="card"
+          action="{{ url_for('submit') }}"
+          method="POST"
+          enctype="multipart/form-data"
+          autocomplete="off">
       <div class="card-header">
         <h2>Applicant Details</h2>
         <span class="pill">Draft</span>
@@ -35,69 +41,230 @@
         <!-- Business Information -->
         <div class="section-title"><span class="dot"></span><h3>Business Information</h3></div>
         <div class="grid cols-2">
-          <div class="field"><label>Business Legal Name</label><input name="business_legal_name" value="{{ (form.get('business_legal_name') if form else '') }}" required></div>
-          <div class="field"><label>Business D/B/A Name</label><input name="business_dba" value="{{ (form.get('business_dba') if form else '') }}"></div>
-          <div class="field"><label>Industry</label><input name="industry" placeholder="e.g., Home Construction" value="{{ (form.get('industry') if form else '') }}" required></div>
-          <div class="field"><label>Legal Entity</label>
+          <div class="field">
+            <label>Business Legal Name</label>
+            <input name="business_legal_name"
+                   value="{{ (form.get('business_legal_name') if form else '') }}"
+                   required />
+          </div>
+          <div class="field">
+            <label>Business D/B/A Name</label>
+            <input name="business_dba"
+                   value="{{ (form.get('business_dba') if form else '') }}" />
+          </div>
+          <div class="field">
+            <label>Industry</label>
+            <input name="industry"
+                   placeholder="e.g., Home Construction"
+                   value="{{ (form.get('industry') if form else '') }}"
+                   required />
+          </div>
+          <div class="field">
+            <label>Legal Entity</label>
             <select name="legal_entity" required>
               <option value="">Select entity type</option>
-              <option {% if form and form.get('legal_entity')=='Sole Proprietorship' %}selected{% endif %}>Sole Proprietorship</option>
-              <option {% if form and form.get('legal_entity')=='LLC' %}selected{% endif %}>LLC</option>
-              <option {% if form and form.get('legal_entity')=='Corporation (C)' %}selected{% endif %}>Corporation (C)</option>
-              <option {% if form and form.get('legal_entity')=='Corporation (S)' %}selected{% endif %}>Corporation (S)</option>
-              <option {% if form and form.get('legal_entity')=='Partnership' %}selected{% endif %}>Partnership</option>
-              <option {% if form and form.get('legal_entity')=='Nonprofit' %}selected{% endif %}>Nonprofit</option>
+              <option value="Sole Proprietorship" {% if form and form.get('legal_entity')=='Sole Proprietorship' %}selected{% endif %}>Sole Proprietorship</option>
+              <option value="LLC" {% if form and form.get('legal_entity')=='LLC' %}selected{% endif %}>LLC</option>
+              <option value="Corporation (C)" {% if form and form.get('legal_entity')=='Corporation (C)' %}selected{% endif %}>Corporation (C)</option>
+              <option value="Corporation (S)" {% if form and form.get('legal_entity')=='Corporation (S)' %}selected{% endif %}>Corporation (S)</option>
+              <option value="Partnership" {% if form and form.get('legal_entity')=='Partnership' %}selected{% endif %}>Partnership</option>
+              <option value="Nonprofit" {% if form and form.get('legal_entity')=='Nonprofit' %}selected{% endif %}>Nonprofit</option>
             </select>
           </div>
-          <div class="field"><label>Business Start Date</label><input type="date" name="business_start_date" value="{{ (form.get('business_start_date') if form else '') }}" required></div>
-          <div class="field"><label>EIN</label><input name="ein" placeholder="12-3456789" value="{{ (form.get('ein') if form else '') }}" required></div>
+          <div class="field">
+            <label>Business Start Date</label>
+            <input type="date"
+                   name="business_start_date"
+                   value="{{ (form.get('business_start_date') if form else '') }}"
+                   required />
+          </div>
+          <div class="field">
+            <label>EIN</label>
+            <input name="ein"
+                   placeholder="12-3456789"
+                   value="{{ (form.get('ein') if form else '') }}"
+                   required
+                   autocomplete="off"
+                   inputmode="numeric" />
+          </div>
         </div>
 
         <div class="grid cols-3" style="margin-top:12px">
-          <div class="field"><label>Company Address</label><input name="company_address1" list="addr_suggestions" autocomplete="street-address" value="{{ (form.get('company_address1') if form else '') }}" required></div>
-          <div class="field"><label>&nbsp;</label><input name="company_address2" placeholder="Suite / Apt" value="{{ (form.get('company_address2') if form else '') }}"></div>
-          <div class="field"><label>City</label><input name="company_city" autocomplete="address-level2" value="{{ (form.get('company_city') if form else '') }}" required></div>
-          <div class="field"><label>State</label><input name="company_state" autocomplete="address-level1" value="{{ (form.get('company_state') if form else '') }}" required></div>
-          <div class="field"><label>ZIP</label><input name="company_zip" autocomplete="postal-code" value="{{ (form.get('company_zip') if form else '') }}" required></div>
-          <div class="field"><label>Country</label><input name="company_country" value="{{ (form.get('company_country') if form else 'United States') }}"></div>
+          <div class="field">
+            <label>Company Address</label>
+            <input name="company_address1"
+                   list="addr_suggestions"
+                   autocomplete="street-address"
+                   value="{{ (form.get('company_address1') if form else '') }}"
+                   required />
+          </div>
+          <div class="field">
+            <label>&nbsp;</label>
+            <input name="company_address2"
+                   placeholder="Suite / Apt"
+                   value="{{ (form.get('company_address2') if form else '') }}" />
+          </div>
+          <div class="field">
+            <label>City</label>
+            <input name="company_city"
+                   autocomplete="address-level2"
+                   value="{{ (form.get('company_city') if form else '') }}"
+                   required />
+          </div>
+          <div class="field">
+            <label>State</label>
+            <input name="company_state"
+                   autocomplete="address-level1"
+                   value="{{ (form.get('company_state') if form else '') }}"
+                   required />
+          </div>
+          <div class="field">
+            <label>ZIP</label>
+            <input name="company_zip"
+                   autocomplete="postal-code"
+                   value="{{ (form.get('company_zip') if form else '') }}"
+                   required />
+          </div>
+          <div class="field">
+            <label>Country</label>
+            <input name="company_country"
+                   value="{{ (form.get('company_country') if form else 'United States') }}" />
+          </div>
         </div>
 
         <div class="grid cols-3" style="margin-top:12px">
-          <div class="field"><label>Business Phone</label><input name="business_phone" value="{{ (form.get('business_phone') if form else '') }}"></div>
-          <div class="field"><label>Requested Loan Amount</label><input type="number" name="loan_amount" min="0" step="100" value="{{ (form.get('loan_amount') if form else '') }}" required></div>
-          <div class="field"><label>Loan Purpose</label><input name="loan_purpose" placeholder="e.g., Working capital, equipment" value="{{ (form.get('loan_purpose') if form else '') }}"></div>
+          <div class="field">
+            <label>Business Phone</label>
+            <input name="business_phone"
+                   value="{{ (form.get('business_phone') if form else '') }}" />
+          </div>
+          <div class="field">
+            <label>Requested Loan Amount</label>
+            <input type="number"
+                   name="loan_amount"
+                   min="0"
+                   step="100"
+                   value="{{ (form.get('loan_amount') if form else '') }}"
+                   required />
+          </div>
+          <div class="field">
+            <label>Loan Purpose</label>
+            <input name="loan_purpose"
+                   placeholder="e.g., Working capital, equipment"
+                   value="{{ (form.get('loan_purpose') if form else '') }}" />
+          </div>
         </div>
 
         <!-- Owner Information -->
         <div class="section-title"><span class="dot"></span><h3>Owner Information</h3></div>
         <div id="owners">
           <div class="grid cols-3">
-            <div class="field"><label>Owner First Name</label><input name="owner_0_first" value="{{ (form.get('owner_0_first') if form else '') }}" required></div>
-            <div class="field"><label>Owner Last Name</label><input name="owner_0_last" value="{{ (form.get('owner_0_last') if form else '') }}" required></div>
-            <div class="field"><label>Ownership %</label><input type="number" name="owner_0_pct" min="0" max="100" step="0.1" value="{{ (form.get('owner_0_pct') if form else '') }}" required></div>
+            <div class="field">
+              <label>Owner First Name</label>
+              <input name="owner_0_first"
+                     value="{{ (form.get('owner_0_first') if form else '') }}"
+                     required />
+            </div>
+            <div class="field">
+              <label>Owner Last Name</label>
+              <input name="owner_0_last"
+                     value="{{ (form.get('owner_0_last') if form else '') }}"
+                     required />
+            </div>
+            <div class="field">
+              <label>Ownership %</label>
+              <input type="number"
+                     name="owner_0_pct"
+                     min="0"
+                     max="100"
+                     step="0.1"
+                     value="{{ (form.get('owner_0_pct') if form else '') }}"
+                     required />
+            </div>
           </div>
           <div class="grid cols-3" style="margin-top:12px">
-            <div class="field"><label>DOB</label><input type="date" name="owner_0_dob" value="{{ (form.get('owner_0_dob') if form else '') }}" required></div>
-            <div class="field"><label>SSN</label><input name="owner_0_ssn" placeholder="123-45-6789" value="{{ (form.get('owner_0_ssn') if form else '') }}" required></div>
-            <div class="field"><label>Email</label><input type="email" name="owner_0_email" value="{{ (form.get('owner_0_email') if form else '') }}" required></div>
+            <div class="field">
+              <label>DOB</label>
+              <input type="date"
+                     name="owner_0_dob"
+                     value="{{ (form.get('owner_0_dob') if form else '') }}"
+                     required />
+            </div>
+            <div class="field">
+              <label>SSN</label>
+              <input name="owner_0_ssn"
+                     placeholder="123-45-6789"
+                     value="{{ (form.get('owner_0_ssn') if form else '') }}"
+                     required
+                     autocomplete="new-password"
+                     inputmode="numeric" />
+            </div>
+            <div class="field">
+              <label>Email</label>
+              <input type="email"
+                     name="owner_0_email"
+                     value="{{ (form.get('owner_0_email') if form else '') }}"
+                     required
+                     autocomplete="off" />
+            </div>
           </div>
           <div class="grid cols-3" style="margin-top:12px">
-            <div class="field"><label>Mobile</label><input name="owner_0_mobile" placeholder="(555) 555-5555" value="{{ (form.get('owner_0_mobile') if form else '') }}" required></div>
-            <div class="field"><label>Home Address</label><input name="owner_0_addr1" list="addr_suggestions" autocomplete="street-address" value="{{ (form.get('owner_0_addr1') if form else '') }}" required></div>
-            <div class="field"><label>&nbsp;</label><input name="owner_0_addr2" placeholder="Suite / Apt" value="{{ (form.get('owner_0_addr2') if form else '') }}"></div>
-            <div class="field"><label>City</label><input name="owner_0_city" autocomplete="address-level2" value="{{ (form.get('owner_0_city') if form else '') }}" required></div>
-            <div class="field"><label>State</label><input name="owner_0_state" autocomplete="address-level1" value="{{ (form.get('owner_0_state') if form else '') }}" required></div>
-            <div class="field"><label>ZIP</label><input name="owner_0_zip" autocomplete="postal-code" value="{{ (form.get('owner_0_zip') if form else '') }}" required></div>
-            <div class="field"><label>Country</label><input name="owner_0_country" value="{{ (form.get('owner_0_country') if form else 'United States') }}"></div>
+            <div class="field">
+              <label>Mobile</label>
+              <input name="owner_0_mobile"
+                     placeholder="(555) 555-5555"
+                     value="{{ (form.get('owner_0_mobile') if form else '') }}"
+                     required />
+            </div>
+            <div class="field">
+              <label>Home Address</label>
+              <input name="owner_0_addr1"
+                     list="addr_suggestions"
+                     autocomplete="street-address"
+                     value="{{ (form.get('owner_0_addr1') if form else '') }}"
+                     required />
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <input name="owner_0_addr2"
+                     placeholder="Suite / Apt"
+                     value="{{ (form.get('owner_0_addr2') if form else '') }}" />
+            </div>
+            <div class="field">
+              <label>City</label>
+              <input name="owner_0_city"
+                     autocomplete="address-level2"
+                     value="{{ (form.get('owner_0_city') if form else '') }}"
+                     required />
+            </div>
+            <div class="field">
+              <label>State</label>
+              <input name="owner_0_state"
+                     autocomplete="address-level1"
+                     value="{{ (form.get('owner_0_state') if form else '') }}"
+                     required />
+            </div>
+            <div class="field">
+              <label>ZIP</label>
+              <input name="owner_0_zip"
+                     autocomplete="postal-code"
+                     value="{{ (form.get('owner_0_zip') if form else '') }}"
+                     required />
+            </div>
+            <div class="field">
+              <label>Country</label>
+              <input name="owner_0_country"
+                     value="{{ (form.get('owner_0_country') if form else 'United States') }}" />
+            </div>
           </div>
         </div>
 
-        <!-- Property & Location -->
-        <div class="section-title"><span class="dot"></span><h3>Property & Location</h3></div>
+        <!-- Property and Location -->
+        <div class="section-title"><span class="dot"></span><h3>Property and Location</h3></div>
 
-        <!-- Always-visible: Own Real Estate? -->
         <div class="grid cols-3">
-          <div class="field"><label>Own Real Estate?</label>
+          <div class="field">
+            <label>Own Real Estate?</label>
             <select name="own_real_estate" required>
               <option value="">Select</option>
               <option value="Yes" {% if form and form.get('own_real_estate')=='Yes' %}selected{% endif %}>Yes</option>
@@ -106,20 +273,33 @@
           </div>
         </div>
 
-        <!-- Conditionally visible: Residence & Business Location -->
+        <!-- Conditionally shown when Yes -->
         <div class="grid cols-3" id="tenureSection" style="display:none;">
-          <br>
-          <br>
-          <div class="field"><label>Residence</label>
+          <br /><br />
+          <div class="field">
+            <label>Residence</label>
             <div class="inline">
-              <label class="inline"><input type="radio" name="residence_tenure" value="Own"  {% if form and form.get('residence_tenure')=='Own' %}checked{% endif %}> Own</label>
-              <label class="inline"><input type="radio" name="residence_tenure" value="Rent" {% if form and form.get('residence_tenure')=='Rent' %}checked{% endif %}> Rent</label>
+              <label class="inline">
+                <input type="radio" name="residence_tenure" value="Own" {% if form and form.get('residence_tenure')=='Own' %}checked{% endif %} />
+                Own
+              </label>
+              <label class="inline">
+                <input type="radio" name="residence_tenure" value="Rent" {% if form and form.get('residence_tenure')=='Rent' %}checked{% endif %} />
+                Rent
+              </label>
             </div>
           </div>
-          <div class="field"><label>Business Location</label>
+          <div class="field">
+            <label>Business Location</label>
             <div class="inline">
-              <label class="inline"><input type="radio" name="business_location_tenure" value="Own"  {% if form and form.get('business_location_tenure')=='Own' %}checked{% endif %}> Own</label>
-              <label class="inline"><input type="radio" name="business_location_tenure" value="Rent" {% if form and form.get('business_location_tenure')=='Rent' %}checked{% endif %}> Rent</label>
+              <label class="inline">
+                <input type="radio" name="business_location_tenure" value="Own" {% if form and form.get('business_location_tenure')=='Own' %}checked{% endif %} />
+                Own
+              </label>
+              <label class="inline">
+                <input type="radio" name="business_location_tenure" value="Rent" {% if form and form.get('business_location_tenure')=='Rent' %}checked{% endif %} />
+                Rent
+              </label>
             </div>
           </div>
         </div>
@@ -140,52 +320,54 @@
     <datalist id="addr_suggestions"></datalist>
   </main>
 
+  <!-- Your script file if you have other logic -->
   <script src="{{ url_for('static', filename='form.js') }}"></script>
+
+  <!-- Toggle and refresh logic -->
   <script>
-    // Show/hide Residence & Business Location based on Own Real Estate
-    (function(){
-    const ownSel  = document.querySelector('select[name="own_real_estate"]');
-    const section = document.getElementById('tenureSection');
-    if (!ownSel || !section) return;
+    // Show or hide Residence and Business Location based on Own Real Estate
+    (function () {
+      const ownSel  = document.querySelector('select[name="own_real_estate"]');
+      const section = document.getElementById('tenureSection');
+      if (!ownSel || !section) return;
 
-    const inputs = section.querySelectorAll(
-      'input[name="residence_tenure"], input[name="business_location_tenure"]'
-    );
+      const inputs = section.querySelectorAll(
+        'input[name="residence_tenure"], input[name="business_location_tenure"]'
+      );
 
-    function update() {
-      const show = ownSel.value === 'Yes';
-      if (show) {
-        section.style.display = 'grid'; // important: force grid back
-      } else {
-        section.style.display = 'none';
-        inputs.forEach(i => { i.disabled = true; i.checked = false; });
+      function update() {
+        const show = ownSel.value === 'Yes';
+        if (show) {
+          section.style.display = 'grid';   // force grid back when showing
+          inputs.forEach(i => i.disabled = false);
+        } else {
+          section.style.display = 'none';
+          inputs.forEach(i => { i.disabled = true; i.checked = false; });
+        }
       }
-      if (show) inputs.forEach(i => i.disabled = false);
-    }
 
-    // React to user changes
-    ownSel.addEventListener('change', update);
+      ownSel.addEventListener('change', update);
 
-    // Initialize once DOM is ready (handles server-filled values)
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', update);
-    } else {
-      update();
-    }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', update);
+      } else {
+        update();
+      }
 
-    // Also re-run if page is restored from BFCache (mobile Safari/Firefox)
-    window.addEventListener('pageshow', function(e){
-      if (e.persisted) update();
-    });
-  })();
-      function () {
+      window.addEventListener('pageshow', function (e) {
+        if (e.persisted) update();
+      });
+    })();
+
+    // Clear form on refresh and back/forward unless rendering validation errors
+    (function () {
       const form = document.getElementById('appForm');
       if (!form) return;
 
       const hasErrors = {{ 'true' if errors else 'false' }};
 
       function shouldResetOnLoad() {
-        if (hasErrors) return false; // keep values visible when showing validation errors
+        if (hasErrors) return false; // keep values when showing server-side validation errors
         try {
           const nav = performance.getEntriesByType('navigation')[0];
           if (!nav) return true;
