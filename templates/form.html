@@ -11,12 +11,27 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
 </head>
 <body>
-  <header class="pc-header">
-    <div class="brand">
-      <span class="badge">Harvest Lending X Pathway Catalyst</span>
-      <h1>Business Financing Application</h1>
+ <header class="pc-header">
+  <div class="brand">
+    <div class="brand-left">
+      <div class="logo-wrap">
+        <img
+          src="{{ url_for('static', filename='pathway-logo.png') }}"
+          alt="Pathway Catalyst Logo"
+          class="logo"
+          loading="eager"
+        />
+      </div>
+
+      <div class="brand-text">
+        <span class="badge">Harvest Lending X Pathway Catalyst</span>
+        <h1>Business Financing Application</h1>
+        <p class="lead">Fast, secure, and confidential submission.</p>
+      </div>
     </div>
-  </header>
+  </div>
+</header>
+
 
   <main class="container">
     {% if errors %}
