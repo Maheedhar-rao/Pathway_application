@@ -87,6 +87,15 @@
                    autocomplete="off"
                    inputmode="numeric" />
           </div>
+
+          <!-- Added: Company Website -->
+          <div class="field">
+            <label>Company Website</label>
+            <input type="url"
+                   name="company_website"
+                   placeholder="https://example.com"
+                   value="{{ (form.get('company_website') if form else '') }}" />
+          </div>
         </div>
 
         <div class="grid cols-3" style="margin-top:12px">
@@ -182,6 +191,7 @@
                      required />
             </div>
           </div>
+
           <div class="grid cols-3" style="margin-top:12px">
             <div class="field">
               <label>DOB</label>
@@ -208,6 +218,7 @@
                      autocomplete="off" />
             </div>
           </div>
+
           <div class="grid cols-3" style="margin-top:12px">
             <div class="field">
               <label>Mobile</label>
@@ -255,6 +266,162 @@
               <label>Country</label>
               <input name="owner_0_country"
                      value="{{ (form.get('owner_0_country') if form else 'United States') }}" />
+            </div>
+          </div>
+
+          <!-- Added: Owner 0 FICO + MCA Balances -->
+          <div class="grid cols-3" style="margin-top:12px">
+            <div class="field">
+              <label>FICO</label>
+              <input type="number"
+                     name="owner_0_fico"
+                     min="300"
+                     max="850"
+                     value="{{ (form.get('owner_0_fico') if form else '') }}" />
+            </div>
+            <div class="field">
+              <label>MCA Balances</label>
+              <input name="owner_0_mca_balances"
+                     placeholder="If any, describe balances or total"
+                     value="{{ (form.get('owner_0_mca_balances') if form else '') }}" />
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <div class="helper" style="opacity:.7;font-size:.9rem;margin-top:10px;">
+                Optional
+              </div>
+            </div>
+          </div>
+
+          <!-- Added: Add Owner toggle -->
+          <div class="grid cols-3" style="margin-top:16px">
+            <div class="field">
+              <label>Add Owner</label>
+              <select name="has_owner_1" id="has_owner_1">
+                <option value="No" {% if form and form.get('has_owner_1')=='No' %}selected{% endif %}>No</option>
+                <option value="Yes" {% if form and form.get('has_owner_1')=='Yes' %}selected{% endif %}>Yes</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Added: Second Owner section -->
+          <div id="owner1Section" style="display:none; margin-top:14px;">
+            <div class="section-title"><span class="dot"></span><h3>Second Owner</h3></div>
+
+            <div class="grid cols-3">
+              <div class="field">
+                <label>Owner First Name</label>
+                <input name="owner_1_first"
+                       value="{{ (form.get('owner_1_first') if form else '') }}" />
+              </div>
+              <div class="field">
+                <label>Owner Last Name</label>
+                <input name="owner_1_last"
+                       value="{{ (form.get('owner_1_last') if form else '') }}" />
+              </div>
+              <div class="field">
+                <label>Ownership %</label>
+                <input type="number"
+                       name="owner_1_pct"
+                       min="0"
+                       max="100"
+                       step="0.1"
+                       value="{{ (form.get('owner_1_pct') if form else '') }}" />
+              </div>
+            </div>
+
+            <div class="grid cols-3" style="margin-top:12px">
+              <div class="field">
+                <label>DOB</label>
+                <input type="date"
+                       name="owner_1_dob"
+                       value="{{ (form.get('owner_1_dob') if form else '') }}" />
+              </div>
+              <div class="field">
+                <label>SSN</label>
+                <input name="owner_1_ssn"
+                       placeholder="123-45-6789"
+                       value="{{ (form.get('owner_1_ssn') if form else '') }}"
+                       autocomplete="new-password"
+                       inputmode="numeric" />
+              </div>
+              <div class="field">
+                <label>Email</label>
+                <input type="email"
+                       name="owner_1_email"
+                       value="{{ (form.get('owner_1_email') if form else '') }}"
+                       autocomplete="off" />
+              </div>
+            </div>
+
+            <div class="grid cols-3" style="margin-top:12px">
+              <div class="field">
+                <label>Mobile</label>
+                <input name="owner_1_mobile"
+                       placeholder="(555) 555-5555"
+                       value="{{ (form.get('owner_1_mobile') if form else '') }}" />
+              </div>
+              <div class="field">
+                <label>Home Address</label>
+                <input name="owner_1_addr1"
+                       list="addr_suggestions"
+                       autocomplete="street-address"
+                       value="{{ (form.get('owner_1_addr1') if form else '') }}" />
+              </div>
+              <div class="field">
+                <label>&nbsp;</label>
+                <input name="owner_1_addr2"
+                       placeholder="Suite / Apt"
+                       value="{{ (form.get('owner_1_addr2') if form else '') }}" />
+              </div>
+
+              <div class="field">
+                <label>City</label>
+                <input name="owner_1_city"
+                       autocomplete="address-level2"
+                       value="{{ (form.get('owner_1_city') if form else '') }}" />
+              </div>
+              <div class="field">
+                <label>State</label>
+                <input name="owner_1_state"
+                       autocomplete="address-level1"
+                       value="{{ (form.get('owner_1_state') if form else '') }}" />
+              </div>
+              <div class="field">
+                <label>ZIP</label>
+                <input name="owner_1_zip"
+                       autocomplete="postal-code"
+                       value="{{ (form.get('owner_1_zip') if form else '') }}" />
+              </div>
+
+              <div class="field">
+                <label>Country</label>
+                <input name="owner_1_country"
+                       value="{{ (form.get('owner_1_country') if form else 'United States') }}" />
+              </div>
+            </div>
+
+            <div class="grid cols-3" style="margin-top:12px">
+              <div class="field">
+                <label>FICO</label>
+                <input type="number"
+                       name="owner_1_fico"
+                       min="300"
+                       max="850"
+                       value="{{ (form.get('owner_1_fico') if form else '') }}" />
+              </div>
+              <div class="field">
+                <label>MCA Balances</label>
+                <input name="owner_1_mca_balances"
+                       placeholder="If any, describe balances or total"
+                       value="{{ (form.get('owner_1_mca_balances') if form else '') }}" />
+              </div>
+              <div class="field">
+                <label>&nbsp;</label>
+                <div class="helper" style="opacity:.7;font-size:.9rem;margin-top:10px;">
+                  Optional
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -310,6 +477,28 @@
           <p>Upload PDFs (you can select multiple)</p>
           <input id="bank_files" name="bank_files" type="file" accept="application/pdf" multiple />
         </div>
+
+        <!-- Added: Authorization + e-sign -->
+        <div class="section-title" style="margin-top:18px">
+          <span class="dot"></span><h3>Authorization</h3>
+        </div>
+
+        <div class="card" style="margin: 12px 0; padding: 14px;">
+          <p style="margin:0; font-size:.95rem; line-height:1.45;">
+            By submitting this application, you authorize Pathway Catalyst and its partners to contact you and obtain
+            information necessary to evaluate financing options. You also acknowledge and agree to electronic records
+            and signatures as permitted under applicable law.
+          </p>
+
+          <label class="inline" style="align-items:flex-start; gap:10px; margin-top:12px;">
+            <input type="checkbox"
+                   name="esign_consent"
+                   value="Yes"
+                   required
+                   {% if form and form.get('esign_consent')=='Yes' %}checked{% endif %} />
+            <span>I agree and provide my electronic signature.</span>
+          </label>
+        </div>
       </div>
 
       <div class="actions">
@@ -338,7 +527,7 @@
       function update() {
         const show = ownSel.value === 'Yes';
         if (show) {
-          section.style.display = 'grid';   // force grid back when showing
+          section.style.display = 'grid';
           inputs.forEach(i => i.disabled = false);
         } else {
           section.style.display = 'none';
@@ -359,6 +548,38 @@
       });
     })();
 
+    // Toggle Second Owner section
+    (function () {
+      const sel = document.getElementById('has_owner_1');
+      const sec = document.getElementById('owner1Section');
+      if (!sel || !sec) return;
+
+      const owner1Inputs = sec.querySelectorAll('input, select, textarea');
+
+      function updateOwner1() {
+        const show = sel.value === 'Yes';
+        sec.style.display = show ? 'block' : 'none';
+        owner1Inputs.forEach(el => {
+          el.disabled = !show;
+          if (!show && (el.type === 'checkbox' || el.type === 'radio')) el.checked = false;
+          if (!show && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.type !== 'hidden') el.value = '';
+          if (!show && el.tagName === 'SELECT') el.selectedIndex = 0;
+        });
+      }
+
+      sel.addEventListener('change', updateOwner1);
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', updateOwner1);
+      } else {
+        updateOwner1();
+      }
+
+      window.addEventListener('pageshow', function (e) {
+        if (e.persisted) updateOwner1();
+      });
+    })();
+
     // Clear form on refresh and back/forward unless rendering validation errors
     (function () {
       const form = document.getElementById('appForm');
@@ -367,7 +588,7 @@
       const hasErrors = {{ 'true' if errors else 'false' }};
 
       function shouldResetOnLoad() {
-        if (hasErrors) return false; // keep values when showing server-side validation errors
+        if (hasErrors) return false;
         try {
           const nav = performance.getEntriesByType('navigation')[0];
           if (!nav) return true;
