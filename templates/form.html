@@ -34,9 +34,47 @@
 
 
   <main class="container">
+    <!-- Progress Steps -->
+    <div class="progress-steps">
+      <div class="step active" data-step="1">
+        <span class="step-num">1</span>
+        <span>Business Info</span>
+      </div>
+      <div class="step-connector"></div>
+      <div class="step" data-step="2">
+        <span class="step-num">2</span>
+        <span>Owner Details</span>
+      </div>
+      <div class="step-connector"></div>
+      <div class="step" data-step="3">
+        <span class="step-num">3</span>
+        <span>Property</span>
+      </div>
+      <div class="step-connector"></div>
+      <div class="step" data-step="4">
+        <span class="step-num">4</span>
+        <span>Documents</span>
+      </div>
+      <div class="step-connector"></div>
+      <div class="step" data-step="5">
+        <span class="step-num">5</span>
+        <span>Submit</span>
+      </div>
+    </div>
+
     {% if errors %}
-    <div class="card" id="errorSummary" style="border-color:#f87171">
-      <div class="card-header"><h2>Fix the highlighted fields</h2></div>
+    <div class="error-summary" id="errorSummary">
+      <h3>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        Please fix the following errors
+      </h3>
+      <ul>
+        {% for field, msg in errors.items() %}
+        <li><strong>{{ field.replace('_', ' ').title() }}:</strong> {{ msg }}</li>
+        {% endfor %}
+      </ul>
     </div>
     {% endif %}
 
@@ -47,9 +85,24 @@
           method="POST"
           enctype="multipart/form-data"
           autocomplete="off">
+      <!-- Hidden rep tracking field -->
+      {% if rep_code %}
+      <input type="hidden" name="rep_code" value="{{ rep_code }}" />
+      {% endif %}
+
       <div class="card-header">
         <h2>Applicant Details</h2>
+        {% if rep_info %}
+        <span class="pill" style="background: rgba(52, 211, 153, 0.15); border-color: rgba(52, 211, 153, 0.3); color: #34d399;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+          Rep: {{ rep_info.name }}
+        </span>
+        {% else %}
         <span class="pill">Draft</span>
+        {% endif %}
       </div>
 
       <div class="card-body">
@@ -453,6 +506,22 @@
               <option value="No" {% if form and form.get('own_real_estate')=='No' %}selected{% endif %}>No</option>
             </select>
           </div>
+          <div class="field">
+            <label>Own Home Location?</label>
+            <select name="own_home_location" required>
+              <option value="">Select</option>
+              <option value="Yes" {% if form and form.get('own_home_location')=='Yes' %}selected{% endif %}>Yes</option>
+              <option value="No" {% if form and form.get('own_home_location')=='No' %}selected{% endif %}>No</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Own Business Location?</label>
+            <select name="own_business_location" required>
+              <option value="">Select</option>
+              <option value="Yes" {% if form and form.get('own_business_location')=='Yes' %}selected{% endif %}>Yes</option>
+              <option value="No" {% if form and form.get('own_business_location')=='No' %}selected{% endif %}>No</option>
+            </select>
+          </div>
         </div>
 
         <!-- Conditionally shown when Yes -->
@@ -490,7 +559,7 @@
         <div class="section-title"><span class="dot"></span><h3>Upload Bank Statements</h3></div>
         <div class="uploader">
           <p>Upload PDFs (you can select multiple)</p>
-          <input id="bank_files" name="bank_files" type="file" accept="application/pdf" multiple />
+          <input id="bank_files" name="bank_files" type="file" accept="application/pdf" multiple required />
         </div>
 
         <!-- Added: Authorization + e-sign -->
@@ -517,7 +586,9 @@
       </div>
 
       <div class="actions">
-        <button type="submit" class="btn primary">Submit Application</button>
+        <button type="submit" class="btn primary" id="submitBtn">
+          <span>Submit Application</span>
+        </button>
       </div>
     </form>
 

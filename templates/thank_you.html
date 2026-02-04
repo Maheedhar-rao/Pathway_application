@@ -8,27 +8,166 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <style>
+    .success-icon {
+      width: 72px;
+      height: 72px;
+      margin: 0 auto 20px;
+      background: linear-gradient(135deg, #059669, #34d399);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 12px 32px rgba(52, 211, 153, .3);
+      animation: scaleIn .4s ease;
+    }
+    .success-icon svg {
+      width: 36px;
+      height: 36px;
+      stroke: white;
+      stroke-width: 3;
+    }
+    @keyframes scaleIn {
+      0% { transform: scale(0); opacity: 0; }
+      60% { transform: scale(1.1); }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .thank-you-title {
+      text-align: center;
+      margin: 0 0 8px;
+      font-size: 28px;
+      background: linear-gradient(135deg, #34d399, #60a5fa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .thank-you-subtitle {
+      text-align: center;
+      color: var(--muted);
+      margin: 0 0 24px;
+      font-size: 15px;
+    }
+    .upload-card {
+      margin-top: 24px;
+    }
+    .success-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(52, 211, 153, .12);
+      border: 1px solid rgba(52, 211, 153, .3);
+      color: #34d399;
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+    .next-steps {
+      background: rgba(96, 165, 250, .06);
+      border: 1px solid rgba(96, 165, 250, .2);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-top: 20px;
+    }
+    .next-steps h4 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      color: var(--primary2);
+    }
+    .next-steps ul {
+      margin: 0;
+      padding-left: 20px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .next-steps li {
+      margin: 6px 0;
+    }
+  </style>
 </head>
 <body>
   <header class="pc-header">
-    <div class="brand"><span class="badge">Harvest Lending X Pathway Catalyst</span></div>
-    <p class="lead">Your application{% if business %} for <strong>{{ business }}</strong>{% endif %} was received. Upload your <strong>Voided Check</strong> and <strong>ID</strong> below (optional).</p>
+    <div class="brand">
+      <div class="brand-left">
+        <div class="logo-wrap">
+          <img
+            src="{{ url_for('static', filename='pathway-logo.png') }}"
+            alt="Pathway Catalyst Logo"
+            class="logo"
+            loading="eager"
+          />
+        </div>
+        <div class="brand-text">
+          <span class="badge">Harvest Lending X Pathway Catalyst</span>
+          <h1>Application Received</h1>
+          <p class="lead">{% if business %}For <strong>{{ business }}</strong>{% else %}Thank you for your submission{% endif %}</p>
+        </div>
+      </div>
+    </div>
   </header>
 
   <main class="container">
-    <div class="card">
-      <div class="card-header" style="display:flex; justify-content:center; text-align:center;"><h1>Thank You</h1>
+    <div class="card success-card">
+      <div class="card-body" style="text-align: center; padding: 40px 24px;">
+        <div class="success-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+        </div>
+        <h1 class="thank-you-title">Application Submitted!</h1>
+        <p class="thank-you-subtitle">Your application has been received and is being reviewed.</p>
+
+        {% if uploaded %}
+        <div class="success-pill">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+          Uploaded: {{ ', '.join(uploaded) }}
+        </div>
+        {% endif %}
       </div>
-      <div class="card-header"><h2>Upload Additional Documents</h2></div>
+    </div>
+
+    <div class="card upload-card">
+      <div class="card-header">
+        <h2>Upload Additional Documents</h2>
+        <span class="pill">Optional</span>
+      </div>
       <div class="card-body">
-        {% if uploaded %}<div class="pill">✅ Uploaded: {{ ', '.join(uploaded) }}</div>{% endif %}
-        <form action="{{ url_for('upload_docs') }}" method="POST" enctype="multipart/form-data" class="grid cols-2">
+        <p style="margin: 0 0 20px; color: var(--muted); font-size: 14px;">
+          Speed up your approval by uploading these documents now.
+        </p>
+        <form action="{{ url_for('upload_docs') }}" method="POST" enctype="multipart/form-data">
           <input type="hidden" name="sid" value="{{ sid or '' }}"/>
-          <div class="field"><label>Voided Check (PDF/JPG/PNG)</label><input type="file" name="voided_check" accept="application/pdf,image/*" /></div>
-          <div class="field"><label>Owner ID (PDF/JPG/PNG)</label><input type="file" name="id_doc" accept="application/pdf,image/*" /></div>
-          <div class="actions" style="grid-column:1/-1"><button class="btn primary" type="submit">Upload</button></div>
+          <div class="grid cols-2">
+            <div class="field">
+              <label>Voided Check</label>
+              <div class="uploader" style="padding: 16px;">
+                <input type="file" name="voided_check" accept="application/pdf,image/*" />
+              </div>
+            </div>
+            <div class="field">
+              <label>Owner ID</label>
+              <div class="uploader" style="padding: 16px;">
+                <input type="file" name="id_doc" accept="application/pdf,image/*" />
+              </div>
+            </div>
+          </div>
+          <div class="actions" style="border-top: none; padding: 20px 0 0;">
+            <button class="btn primary" type="submit">
+              <span>Upload Documents</span>
+            </button>
+          </div>
         </form>
-        <p class="lead" style="margin-top:14px">We’ll notify you if anything else is needed.</p>
+
+        <div class="next-steps">
+          <h4>What happens next?</h4>
+          <ul>
+            <li>Our team will review your application within 24-48 hours</li>
+            <li>We'll contact you if any additional information is needed</li>
+            <li>You'll receive a decision notification via email</li>
+          </ul>
+        </div>
       </div>
     </div>
   </main>

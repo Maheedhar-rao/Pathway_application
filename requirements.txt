@@ -2,3 +2,4 @@ flask==3.0.0
 psycopg[binary]>=3.1
 python-dotenv
 supabase
+reportlab>=4.0.0

@@ -3,13 +3,20 @@
 """
 Public form → Thank You (optional uploads). Separate admin dashboard.
 JSON APIs power the dashboard. Stores data in Supabase (REST), no DB URL.
+Each sales rep gets a unique link that tracks their submissions.
 """
 from __future__ import annotations
 
 import os
 import re
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
+from datetime import datetime
+from io import BytesIO
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from urllib.parse import quote
 
 from flask import (
@@ -18,6 +25,18 @@ from flask import (
 )
 from supabase import create_client, Client
 from dotenv import load_dotenv, find_dotenv
+
+# PDF generation
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    PDF_ENABLED = True
+except ImportError:
+    PDF_ENABLED = False
+    print("Warning: reportlab not installed. PDF generation disabled. Run: pip install reportlab")
 
 load_dotenv(find_dotenv())
 
@@ -30,6 +49,41 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE = os.environ.get("SUPABASE_SERVICE_ROLE")
 if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE:
     raise RuntimeError("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE in your environment.")
+
+# Email config (optional - for sending PDFs to reps)
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASS = os.environ.get("SMTP_PASS", "")
+EMAIL_FROM = os.environ.get("EMAIL_FROM", "tech@pathwaycatalyst.com")
+EMAIL_ENABLED = bool(SMTP_USER and SMTP_PASS)
+
+# Main team email - receives ALL submissions
+TEAM_EMAIL = os.environ.get("TEAM_EMAIL", "team@pathwaycatalyst.com")
+
+# ---- Sales Rep Configuration ------------------------------------------------
+# Each rep has a unique code, name, and email
+# URL format: /?rep=<code>  e.g., /?rep=john
+SALES_REPS = {
+    "john": {"name": "John Smith", "email": "john@example.com"},
+    "sarah": {"name": "Sarah Johnson", "email": "sarah@example.com"},
+    "mike": {"name": "Mike Williams", "email": "mike@example.com"},
+    "emily": {"name": "Emily Davis", "email": "emily@example.com"},
+    "david": {"name": "David Brown", "email": "david@example.com"},
+    "lisa": {"name": "Lisa Miller", "email": "lisa@example.com"},
+    "james": {"name": "James Wilson", "email": "james@example.com"},
+    "anna": {"name": "Anna Taylor", "email": "anna@example.com"},
+    "chris": {"name": "Chris Anderson", "email": "chris@example.com"},
+    "kate": {"name": "Kate Thomas", "email": "kate@example.com"},
+    "yuly": {"name": "Yuly", "email": "tech@pathwaycatalyst.com"},
+    "tom": {"name": "Tom", "email": "tom@pathwaycatalyst.com"},
+}
+
+def get_rep_info(rep_code: str) -> Optional[dict]:
+    """Get rep info by code, case-insensitive."""
+    if not rep_code:
+        return None
+    return SALES_REPS.get(rep_code.lower().strip())
 
 sb: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
@@ -61,6 +115,184 @@ def _is_valid_fico(value: str) -> bool:
         return False
     return 300 <= n <= 850
 
+def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str = None) -> BytesIO:
+    """Generate a PDF summary of the application."""
+    if not PDF_ENABLED:
+        return None
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
+    styles = getSampleStyleSheet()
+
+    # Custom styles
+    title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=18, spaceAfter=20, textColor=colors.HexColor('#1e40af'))
+    section_style = ParagraphStyle('Section', parent=styles['Heading2'], fontSize=14, spaceBefore=15, spaceAfter=10, textColor=colors.HexColor('#1e40af'))
+    normal_style = styles['Normal']
+
+    elements = []
+
+    # Header
+    elements.append(Paragraph("Pathway Catalyst - Loan Application", title_style))
+    elements.append(Paragraph(f"Application ID: {submission_id}", normal_style))
+    elements.append(Paragraph(f"Submitted: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}", normal_style))
+    if rep_name:
+        elements.append(Paragraph(f"Sales Representative: {rep_name}", normal_style))
+    elements.append(Spacer(1, 20))
+
+    # Business Information
+    elements.append(Paragraph("Business Information", section_style))
+    biz_data = [
+        ["Business Legal Name:", form_data.get("business_legal_name", "")],
+        ["DBA Name:", form_data.get("business_dba", "")],
+        ["Industry:", form_data.get("industry", "")],
+        ["Legal Entity:", form_data.get("legal_entity", "")],
+        ["Business Start Date:", form_data.get("business_start_date", "")],
+        ["EIN:", form_data.get("ein", "")],
+        ["Website:", form_data.get("company_website", "")],
+        ["Phone:", form_data.get("business_phone", "")],
+        ["Loan Amount:", f"${form_data.get('loan_amount', '0'):,}" if form_data.get('loan_amount') else ""],
+        ["Loan Purpose:", form_data.get("loan_purpose", "")],
+    ]
+    biz_table = Table(biz_data, colWidths=[2*inch, 4.5*inch])
+    biz_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+    ]))
+    elements.append(biz_table)
+
+    # Company Address
+    elements.append(Paragraph("Company Address", section_style))
+    addr = f"{form_data.get('company_address1', '')} {form_data.get('company_address2', '')}".strip()
+    city_state = f"{form_data.get('company_city', '')}, {form_data.get('company_state', '')} {form_data.get('company_zip', '')}"
+    elements.append(Paragraph(addr, normal_style))
+    elements.append(Paragraph(city_state, normal_style))
+    elements.append(Spacer(1, 10))
+
+    # Owner Information
+    elements.append(Paragraph("Primary Owner", section_style))
+    owner_data = [
+        ["Name:", f"{form_data.get('owner_0_first', '')} {form_data.get('owner_0_last', '')}"],
+        ["Ownership %:", f"{form_data.get('owner_0_pct', '')}%"],
+        ["DOB:", form_data.get("owner_0_dob", "")],
+        ["SSN:", form_data.get("owner_0_ssn", "")],
+        ["Email:", form_data.get("owner_0_email", "")],
+        ["Mobile:", form_data.get("owner_0_mobile", "")],
+        ["FICO:", form_data.get("owner_0_fico", "N/A")],
+    ]
+    owner_table = Table(owner_data, colWidths=[2*inch, 4.5*inch])
+    owner_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(owner_table)
+
+    # Second Owner (if present)
+    if form_data.get("has_owner_1") == "Yes":
+        elements.append(Paragraph("Second Owner", section_style))
+        owner2_data = [
+            ["Name:", f"{form_data.get('owner_1_first', '')} {form_data.get('owner_1_last', '')}"],
+            ["Ownership %:", f"{form_data.get('owner_1_pct', '')}%"],
+            ["DOB:", form_data.get("owner_1_dob", "")],
+            ["SSN:", form_data.get("owner_1_ssn", "")],
+            ["Email:", form_data.get("owner_1_email", "")],
+            ["Mobile:", form_data.get("owner_1_mobile", "")],
+        ]
+        owner2_table = Table(owner2_data, colWidths=[2*inch, 4.5*inch])
+        owner2_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(owner2_table)
+
+    # Property Information
+    elements.append(Paragraph("Property Information", section_style))
+    prop_data = [
+        ["Owns Real Estate:", form_data.get("own_real_estate", "")],
+        ["Own Home Location:", form_data.get("own_home_location", "")],
+        ["Own Business Location:", form_data.get("own_business_location", "")],
+        ["Residence:", form_data.get("residence_tenure", "N/A")],
+        ["Business Location:", form_data.get("business_location_tenure", "N/A")],
+    ]
+    prop_table = Table(prop_data, colWidths=[2*inch, 4.5*inch])
+    prop_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(prop_table)
+
+    # E-Sign Consent
+    elements.append(Spacer(1, 20))
+    elements.append(Paragraph("Electronic Signature Consent: Yes", normal_style))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
+
+def send_email_with_pdf(
+    to_emails: List[str],
+    business_name: str,
+    pdf_buffer: BytesIO,
+    submission_id: int,
+    rep_name: str = None
+):
+    """Send email with PDF attachment to specified recipients."""
+    if not EMAIL_ENABLED:
+        print(f"Email disabled. Would send to {', '.join(to_emails)}")
+        return False
+
+    if not to_emails:
+        return False
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_FROM
+        msg['To'] = ', '.join(to_emails)
+        msg['Subject'] = f"New Application: {business_name} (ID: {submission_id})"
+
+        # Email body
+        rep_line = f"\nReferred by: {rep_name}" if rep_name else "\nDirect submission (no rep)"
+        body = f"""
+New Loan Application Received
+
+Business: {business_name}
+Application ID: {submission_id}
+Submitted: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}{rep_line}
+
+Please find the application summary attached as a PDF.
+
+You can view the full details in the admin dashboard.
+
+Best regards,
+Pathway Catalyst System
+        """
+        msg.attach(MIMEText(body, 'plain'))
+
+        # Attach PDF - need to read and reset buffer for multiple sends
+        if pdf_buffer:
+            pdf_buffer.seek(0)
+            pdf_attachment = MIMEApplication(pdf_buffer.read(), _subtype='pdf')
+            pdf_attachment.add_header('Content-Disposition', 'attachment', filename=f'application_{submission_id}.pdf')
+            msg.attach(pdf_attachment)
+
+        # Send email
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.send_message(msg)
+
+        print(f"Email sent to {', '.join(to_emails)}")
+        return True
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+        return False
+
+
 def validate_fields(form: dict) -> dict:
     errors = {}
 
@@ -69,7 +301,7 @@ def validate_fields(form: dict) -> dict:
         'business_legal_name','industry','legal_entity','business_start_date','ein',
         'company_address1','company_city','company_state','company_zip',
         'owner_0_first','owner_0_last','owner_0_pct','owner_0_dob','owner_0_ssn','owner_0_email','owner_0_mobile',
-        'own_real_estate',
+        'own_real_estate','own_home_location','own_business_location',
         # New required field from PDF concept
         'esign_consent',
     ]
@@ -139,7 +371,9 @@ def validate_fields(form: dict) -> dict:
 # -------------------- Public Pages --------------------
 @app.route("/")
 def home():
-    return render_template("form.html")
+    rep_code = request.args.get("rep", "").strip()
+    rep_info = get_rep_info(rep_code)
+    return render_template("form.html", rep_code=rep_code, rep_info=rep_info)
 
 @app.route("/thank-you")
 def thank_you():
@@ -163,13 +397,24 @@ def submit():
     # Normalize request.form into a clean dict
     form = {k: (v.strip() if isinstance(v, str) else v) for k, v in request.form.items()}
 
+    # Get rep info from hidden field
+    rep_code = form.get("rep_code", "").strip()
+    rep_info = get_rep_info(rep_code)
+
     # Enforce default for has_owner_1 if not present
     if "has_owner_1" not in form or not form.get("has_owner_1"):
         form["has_owner_1"] = "No"
 
     errors = validate_fields(form)
+
+    # Validate bank statement upload (required)
+    bank_files = request.files.getlist("bank_files")
+    has_bank_file = any(f and f.filename for f in bank_files)
+    if not has_bank_file:
+        errors['bank_files'] = 'At least one bank statement is required'
+
     if errors:
-        return render_template("form.html", errors=errors, form=form), 400
+        return render_template("form.html", errors=errors, form=form, rep_code=rep_code, rep_info=rep_info), 400
 
     business_legal_name = form.get("business_legal_name") or ""
     industry = form.get("industry") or ""
@@ -193,7 +438,7 @@ def submit():
             owners.append((first1 + " " + last1).strip())
 
     # Insert into Supabase
-    payload = {
+    db_payload = {
         "business_legal_name": business_legal_name,
         "industry": industry,
         "loan_amount": loan_amount,
@@ -201,12 +446,15 @@ def submit():
         "payload": form,               # jsonb
         "ein": form.get("ein"),
         "business_phone": form.get("business_phone"),
-
-        # Optional convenience columns (keep if you want to query these easily later)
         "company_website": form.get("company_website"),
     }
 
-    ins = sb.table("applications").insert(payload).execute()
+    # Add rep info if available
+    if rep_info:
+        db_payload["rep_name"] = rep_info["name"]
+        db_payload["rep_email"] = rep_info["email"]
+
+    ins = sb.table("applications").insert(db_payload).execute()
     if not ins.data:
         abort(500, description="Insert failed")
     submission_id = ins.data[0]["id"]
@@ -222,10 +470,32 @@ def submit():
         sb.table("application_files").insert({
             "application_id": submission_id,
             "filename": safe,
-            "storage_path": str(dest),  # local path; you can switch to Supabase Storage later
+            "storage_path": str(dest),
             "size_bytes": size,
             "doc_type": "bank_statement",
         }).execute()
+
+    # Generate PDF and email to team + rep (if applicable)
+    if PDF_ENABLED:
+        try:
+            rep_name = rep_info["name"] if rep_info else None
+            pdf_buffer = generate_application_pdf(form, submission_id, rep_name)
+
+            if pdf_buffer:
+                # Build recipient list: always include team, add rep if exists
+                recipients = [TEAM_EMAIL]
+                if rep_info and rep_info["email"]:
+                    recipients.append(rep_info["email"])
+
+                send_email_with_pdf(
+                    to_emails=recipients,
+                    business_name=business_legal_name,
+                    pdf_buffer=pdf_buffer,
+                    submission_id=submission_id,
+                    rep_name=rep_name
+                )
+        except Exception as e:
+            print(f"Failed to generate/send PDF: {e}")
 
     return redirect(url_for("thank_you", sid=submission_id))
 
@@ -261,16 +531,22 @@ def api_submissions():
     except ValueError:
         limit, offset = 100, 0
 
+    # Optional filter by rep
+    rep_filter = request.args.get("rep", "").strip()
+
     start = offset
     end = offset + limit - 1
 
-    res = (
-        sb.table("applications")
-        .select("id, created_at, business_legal_name, industry, loan_amount, owners, payload, company_website")
-        .order("id", desc=True)
-        .range(start, end)
-        .execute()
+    query = sb.table("applications").select(
+        "id, created_at, business_legal_name, industry, loan_amount, owners, payload, company_website, rep_name, rep_email"
     )
+
+    if rep_filter:
+        rep_info = get_rep_info(rep_filter)
+        if rep_info:
+            query = query.eq("rep_name", rep_info["name"])
+
+    res = query.order("id", desc=True).range(start, end).execute()
     rows = res.data or []
     for r in rows:
         if r.get("loan_amount") is not None:
@@ -280,7 +556,7 @@ def api_submissions():
 @app.route("/api/submissions/<int:sid>")
 def api_submission_detail(sid: int):
     app_res = sb.table("applications").select(
-        "id, created_at, business_legal_name, industry, loan_amount, owners, payload, company_website"
+        "id, created_at, business_legal_name, industry, loan_amount, owners, payload, company_website, rep_name, rep_email"
     ).eq("id", sid).execute()
     rows = app_res.data or []
     if not rows:
@@ -300,10 +576,28 @@ def api_submission_detail(sid: int):
     app_row["files"] = files
     return jsonify(app_row)
 
+@app.route("/api/reps")
+def api_reps():
+    """List all sales reps with their unique links."""
+    base_url = request.host_url.rstrip("/")
+    reps_list = []
+    for code, info in SALES_REPS.items():
+        reps_list.append({
+            "code": code,
+            "name": info["name"],
+            "email": info["email"],
+            "link": f"{base_url}/?rep={code}"
+        })
+    return jsonify(reps_list)
+
 # Optional: serve static admin dashboard page
 @app.route("/admin")
 def admin_static_dashboard():
     return send_from_directory(str(APP_DIR / "public"), "dashboard.html")
+
+@app.route("/admin/reps")
+def admin_rep_links():
+    return send_from_directory(str(APP_DIR / "public"), "rep-links.html")
 
 # Cache-control: discourage going back to a stale form after Thank You
 @app.after_request

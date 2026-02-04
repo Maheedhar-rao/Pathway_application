@@ -8,11 +8,86 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../static/styles.css">
+  <style>
+    .nav-links {
+      display: flex;
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .nav-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      background: rgba(96, 165, 250, 0.1);
+      border: 1px solid rgba(96, 165, 250, 0.25);
+      border-radius: 10px;
+      color: #60a5fa;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all .2s;
+    }
+    .nav-link:hover {
+      background: rgba(96, 165, 250, 0.15);
+      border-color: rgba(96, 165, 250, 0.4);
+    }
+    .rep-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: rgba(52, 211, 153, 0.12);
+      border: 1px solid rgba(52, 211, 153, 0.25);
+      border-radius: 6px;
+      color: #34d399;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .no-rep {
+      color: #94a3b8;
+      font-size: 12px;
+      font-style: italic;
+    }
+    .search {
+      background: rgba(15,23,42,.55);
+      border: 1px solid rgba(148,163,184,.2);
+      border-radius: 10px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-size: 14px;
+      width: 280px;
+    }
+    .search:focus {
+      outline: none;
+      border-color: rgba(96,165,250,.5);
+    }
+  </style>
 </head>
 <body>
   <header class="pc-header">
-    <div class="brand"><span class="badge">PATHWAY CATALYST</span><h1>Submissions Dashboard</h1></div>
-    <p class="lead">Admin-only view. Click “View” to open details and preview PDFs at the bottom.</p>
+    <div class="brand">
+      <span class="badge">PATHWAY CATALYST</span>
+      <h1>Submissions Dashboard</h1>
+    </div>
+    <p class="lead">Admin-only view. Click "View" to open details and preview PDFs at the bottom.</p>
+    <div class="nav-links">
+      <a href="/admin/reps" class="nav-link">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+        Rep Links
+      </a>
+      <a href="/" class="nav-link">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        Application Form
+      </a>
+    </div>
   </header>
 
   <main class="container">
@@ -20,7 +95,7 @@
       <div class="card-header">
         <h2>Recent Submissions</h2>
         <div class="inline">
-          <input id="searchBox" class="search" type="text" placeholder="Search by business, owner, or industry..." />
+          <input id="searchBox" class="search" type="text" placeholder="Search by business, owner, rep..." />
           <button id="refreshBtn" class="btn ghost">Refresh</button>
         </div>
       </div>
@@ -28,7 +103,16 @@
         <div class="table-wrap">
           <table class="table" id="submissionsTable">
             <thead>
-              <tr><th>ID</th><th>Created</th><th>Business</th><th>Industry</th><th>Loan</th><th>Owners</th><th></th></tr>
+              <tr>
+                <th>ID</th>
+                <th>Created</th>
+                <th>Business</th>
+                <th>Industry</th>
+                <th>Loan</th>
+                <th>Owners</th>
+                <th>Rep</th>
+                <th></th>
+              </tr>
             </thead>
             <tbody></tbody>
           </table>
@@ -52,78 +136,131 @@
     const res = await fetch('/api/submissions');
     return await res.json();
   }
+
   function fmtMoney(x) {
     if (x == null) return '';
-    try { return new Intl.NumberFormat(undefined,{style:'currency',currency:'USD',maximumFractionDigits:0}).format(+x); } catch { return String(x); }
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits: 0
+      }).format(+x);
+    } catch {
+      return String(x);
+    }
   }
+
   function renderRows(data) {
     const q = (document.getElementById('searchBox').value || '').toLowerCase();
     const tbody = document.querySelector('#submissionsTable tbody');
     tbody.innerHTML = '';
+
     data.filter(item => {
-      const hay = (item.business_legal_name + ' ' + item.industry + ' ' + (item.owners || []).join(' ')).toLowerCase();
+      const hay = (
+        item.business_legal_name + ' ' +
+        item.industry + ' ' +
+        (item.owners || []).join(' ') + ' ' +
+        (item.rep_name || '')
+      ).toLowerCase();
       return !q || hay.includes(q);
     }).forEach(item => {
       const tr = document.createElement('tr');
+      const repHtml = item.rep_name
+        ? `<span class="rep-badge">
+             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+               <circle cx="12" cy="7" r="4"/>
+             </svg>
+             ${item.rep_name}
+           </span>`
+        : '<span class="no-rep">Direct</span>';
+
       tr.innerHTML = `
         <td>${item.id}</td>
         <td>${new Date(item.created_at).toLocaleString()}</td>
         <td>${item.business_legal_name || ''}</td>
         <td>${item.industry || ''}</td>
         <td>${fmtMoney(item.loan_amount)}</td>
-        <td>${(item.owners || []).map(o=>`<span class='chip'>👤 ${o}</span>`).join(' ')}</td>
+        <td>${(item.owners || []).map(o => `<span class='chip'>👤 ${o}</span>`).join(' ')}</td>
+        <td>${repHtml}</td>
         <td><button class="btn primary" onclick="showDetails(${item.id})">View</button></td>
       `;
       tbody.appendChild(tr);
     });
   }
+
   async function showDetails(id) {
     const res = await fetch('/api/submissions/' + id);
     const data = await res.json();
-    document.getElementById('modalTitle').textContent = `Submission #${data.id} — ${data.business_legal_name||''}`;
+    document.getElementById('modalTitle').textContent = `Submission #${data.id} — ${data.business_legal_name || ''}`;
+
     const body = document.getElementById('modalBody');
     const p = data.payload || {};
+
+    const repInfo = data.rep_name
+      ? `<div><strong>Sales Rep</strong></div><div>${data.rep_name} (${data.rep_email || 'N/A'})</div>`
+      : `<div><strong>Sales Rep</strong></div><div style="color:#94a3b8">Direct submission (no rep)</div>`;
+
     body.innerHTML = `
       <div class="kv">
         <div><strong>Created</strong></div><div>${new Date(data.created_at).toLocaleString()}</div>
-        <div><strong>Business</strong></div><div>${p.business_legal_name||''}</div>
-        <div><strong>Industry</strong></div><div>${p.industry||''}</div>
-        <div><strong>Legal Entity</strong></div><div>${p.legal_entity||''}</div>
-        <div><strong>EIN</strong></div><div>${p.ein||''}</div>
-        <div><strong>Phone</strong></div><div>${p.business_phone||''}</div>
-        <div><strong>Address</strong></div><div>${p.company_address1||''} ${p.company_address2||''}, ${p.company_city||''}, ${p.company_state||''} ${p.company_zip||''}</div>
-        <div><strong>Loan Amount</strong></div><div>${fmtMoney(p.loan_amount||data.loan_amount)}</div>
-        <div><strong>Owner</strong></div><div>${(p.owner_0_first||'') + (p.owner_0_last ? ' ' + p.owner_0_last : '')} (${p.owner_0_pct||''}%)</div>
-        <div><strong>Owner Email</strong></div><div>${p.owner_0_email||''}</div>
-        <div><strong>Owner Phone</strong></div><div>${p.owner_0_mobile||''}</div>
+        ${repInfo}
+        <div><strong>Business</strong></div><div>${p.business_legal_name || ''}</div>
+        <div><strong>Industry</strong></div><div>${p.industry || ''}</div>
+        <div><strong>Legal Entity</strong></div><div>${p.legal_entity || ''}</div>
+        <div><strong>EIN</strong></div><div>${p.ein || ''}</div>
+        <div><strong>Phone</strong></div><div>${p.business_phone || ''}</div>
+        <div><strong>Address</strong></div><div>${p.company_address1 || ''} ${p.company_address2 || ''}, ${p.company_city || ''}, ${p.company_state || ''} ${p.company_zip || ''}</div>
+        <div><strong>Loan Amount</strong></div><div>${fmtMoney(p.loan_amount || data.loan_amount)}</div>
+        <div><strong>Owner</strong></div><div>${(p.owner_0_first || '') + (p.owner_0_last ? ' ' + p.owner_0_last : '')} (${p.owner_0_pct || ''}%)</div>
+        <div><strong>Owner Email</strong></div><div>${p.owner_0_email || ''}</div>
+        <div><strong>Owner Phone</strong></div><div>${p.owner_0_mobile || ''}</div>
       </div>
+
       <h4 style="margin-top:16px">Bank Statements</h4>
       <div class="pdf-grid">
-        ${ (data.files||[]).filter(f=>f.doc_type==='bank_statement').map(f=>`
+        ${(data.files || []).filter(f => f.doc_type === 'bank_statement').map(f => `
           <div class="pdf-box">
             <div class="chip">📄 ${f.filename}</div>
             <embed src="${f.url}" type="application/pdf"/>
           </div>
         `).join('') || '<p class="lead">No bank statements uploaded.</p>'}
       </div>
+
       <h4 style="margin-top:16px">Other Documents</h4>
       <div class="pdf-grid">
-        ${ (data.files||[]).filter(f=>f.doc_type!=='bank_statement').map(f=>`
+        ${(data.files || []).filter(f => f.doc_type !== 'bank_statement').map(f => `
           <div class="pdf-box">
-            <div class="chip">📎 ${f.doc_type||'file'} — ${f.filename}</div>
-            ${f.filename.toLowerCase().endsWith('.pdf') ? `<embed src="${f.url}" type="application/pdf"/>` : `<a class="btn ghost" href="${f.url}" target="_blank">Open</a>`}
+            <div class="chip">📎 ${f.doc_type || 'file'} — ${f.filename}</div>
+            ${f.filename.toLowerCase().endsWith('.pdf')
+              ? `<embed src="${f.url}" type="application/pdf"/>`
+              : `<a class="btn ghost" href="${f.url}" target="_blank">Open</a>`}
           </div>
         `).join('') || '<p class="lead">None yet.</p>'}
       </div>
     `;
     openModal();
   }
-  function openModal(){ const m = document.getElementById('detailModal'); m.classList.add('open'); m.setAttribute('aria-hidden','false'); }
-  function closeModal(){ const m = document.getElementById('detailModal'); m.classList.remove('open'); m.setAttribute('aria-hidden','true'); }
-  document.getElementById('refreshBtn').addEventListener('click', async()=>renderRows(await fetchData()));
-  document.getElementById('searchBox').addEventListener('input', async()=>renderRows(await fetchData()));
-  (async()=>renderRows(await fetchData()))();
-  window.closeModal = closeModal; window.showDetails = showDetails;
+
+  function openModal() {
+    const m = document.getElementById('detailModal');
+    m.classList.add('open');
+    m.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeModal() {
+    const m = document.getElementById('detailModal');
+    m.classList.remove('open');
+    m.setAttribute('aria-hidden', 'true');
+  }
+
+  document.getElementById('refreshBtn').addEventListener('click', async () => renderRows(await fetchData()));
+  document.getElementById('searchBox').addEventListener('input', async () => renderRows(await fetchData()));
+
+  (async () => renderRows(await fetchData()))();
+
+  window.closeModal = closeModal;
+  window.showDetails = showDetails;
 </script>
 </body>
 </html>

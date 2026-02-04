@@ -1,5 +1,109 @@
 // Client-side hints & address suggestions (local); optional hook for Google Places
 (function () {
+  // Progress Steps Tracking
+  const steps = document.querySelectorAll('.step');
+  const sections = {
+    1: ['business_legal_name', 'industry', 'legal_entity', 'ein', 'company_address1'],
+    2: ['owner_0_first', 'owner_0_last', 'owner_0_ssn', 'owner_0_email'],
+    3: ['own_real_estate'],
+    4: ['bank_files'],
+    5: ['esign_consent']
+  };
+
+  function updateProgressSteps() {
+    let currentStep = 1;
+
+    for (let step = 1; step <= 5; step++) {
+      const fields = sections[step] || [];
+      const hasValue = fields.some(name => {
+        const el = document.querySelector(`[name="${name}"]`);
+        if (!el) return false;
+        if (el.type === 'file') return el.files && el.files.length > 0;
+        if (el.type === 'checkbox') return el.checked;
+        return el.value && el.value.trim() !== '';
+      });
+
+      if (hasValue && step >= currentStep) {
+        currentStep = step;
+      }
+    }
+
+    steps.forEach((stepEl, idx) => {
+      const stepNum = idx + 1;
+      stepEl.classList.remove('active', 'completed');
+
+      if (stepNum < currentStep) {
+        stepEl.classList.add('completed');
+      } else if (stepNum === currentStep) {
+        stepEl.classList.add('active');
+      }
+    });
+  }
+
+  // Debounce helper
+  function debounce(fn, delay) {
+    let timeout;
+    return function(...args) {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => fn.apply(this, args), delay);
+    };
+  }
+
+  const debouncedUpdate = debounce(updateProgressSteps, 150);
+
+  // Listen for input changes
+  document.querySelectorAll('input, select, textarea').forEach(el => {
+    el.addEventListener('input', debouncedUpdate);
+    el.addEventListener('change', debouncedUpdate);
+  });
+
+  // Initial update
+  setTimeout(updateProgressSteps, 100);
+
+  // Loading state for form submission
+  const form = document.getElementById('appForm');
+  const submitBtn = document.getElementById('submitBtn');
+
+  if (form && submitBtn) {
+    form.addEventListener('submit', function() {
+      // Basic HTML5 validation check
+      if (!form.checkValidity()) {
+        return;
+      }
+
+      // Add loading state
+      submitBtn.classList.add('loading');
+      submitBtn.disabled = true;
+    });
+  }
+
+  // Drag and drop for file upload
+  const uploader = document.querySelector('.uploader');
+  const fileInput = document.getElementById('bank_files');
+
+  if (uploader && fileInput) {
+    ['dragenter', 'dragover'].forEach(evt => {
+      uploader.addEventListener(evt, (e) => {
+        e.preventDefault();
+        uploader.classList.add('drag-over');
+      });
+    });
+
+    ['dragleave', 'drop'].forEach(evt => {
+      uploader.addEventListener(evt, (e) => {
+        e.preventDefault();
+        uploader.classList.remove('drag-over');
+      });
+    });
+
+    uploader.addEventListener('drop', (e) => {
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        fileInput.files = files;
+        debouncedUpdate();
+      }
+    });
+  }
   const EIN_RE = /^(?!00)\d{2}-\d{7}$/;
   const SSN_RE = /^(?!000|666|9\d\d)(\d{3})-(?!00)(\d{2})-(?!0000)(\d{4})$/;
   const PHONE_RE = /^\+?1?\s*\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}$/;

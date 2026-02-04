@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sales Rep Links — Pathway Catalyst</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b1020;
+      --bg2: #0f172a;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --primary: #60a5fa;
+      --success: #34d399;
+      --border: rgba(148,163,184,.14);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(1200px 600px at 15% 0%, rgba(96,165,250,.22), transparent 60%),
+        radial-gradient(900px 500px at 85% 10%, rgba(52,211,153,.16), transparent 55%),
+        linear-gradient(180deg, var(--bg), var(--bg2));
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      background: linear-gradient(135deg, #60a5fa, #34d399);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      margin: 0 0 30px;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02));
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 18px 50px rgba(0,0,0,.45);
+      overflow: hidden;
+      backdrop-filter: blur(12px);
+    }
+
+    .rep-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(148,163,184,.1);
+      gap: 16px;
+    }
+
+    .rep-item:last-child {
+      border-bottom: none;
+    }
+
+    .rep-info {
+      flex: 1;
+    }
+
+    .rep-name {
+      font-weight: 600;
+      font-size: 15px;
+      margin-bottom: 4px;
+    }
+
+    .rep-email {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .rep-link {
+      flex: 2;
+      background: rgba(15,23,42,.55);
+      border: 1px solid rgba(148,163,184,.2);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 13px;
+      color: var(--primary);
+      word-break: break-all;
+      font-family: monospace;
+    }
+
+    .copy-btn {
+      background: linear-gradient(135deg, #2563eb, #3b82f6);
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      transition: transform .1s, box-shadow .2s;
+      white-space: nowrap;
+    }
+
+    .copy-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 20px rgba(37,99,235,.3);
+    }
+
+    .copy-btn.copied {
+      background: linear-gradient(135deg, #059669, #34d399);
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .stat-card {
+      background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02));
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 32px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #60a5fa, #34d399);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .stat-label {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 4px;
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--primary);
+      text-decoration: none;
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+
+    .back-link:hover {
+      text-decoration: underline;
+    }
+
+    @media (max-width: 700px) {
+      .rep-item {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .stats {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="/admin" class="back-link">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M19 12H5M12 19l-7-7 7-7"/>
+      </svg>
+      Back to Dashboard
+    </a>
+
+    <h1>Sales Rep Links</h1>
+    <p class="subtitle">Each rep has a unique link to track their referrals</p>
+
+    <div class="stats" id="stats">
+      <div class="stat-card">
+        <div class="stat-value" id="totalReps">-</div>
+        <div class="stat-label">Total Reps</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="totalSubmissions">-</div>
+        <div class="stat-label">Total Submissions</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="todaySubmissions">-</div>
+        <div class="stat-label">Today</div>
+      </div>
+    </div>
+
+    <div class="card" id="repList">
+      <div style="padding: 40px; text-align: center; color: var(--muted);">Loading...</div>
+    </div>
+  </div>
+
+  <script>
+    const baseUrl = window.location.origin;
+
+    async function loadReps() {
+      try {
+        const res = await fetch('/api/reps');
+        const reps = await res.json();
+
+        document.getElementById('totalReps').textContent = reps.length;
+
+        const container = document.getElementById('repList');
+        container.innerHTML = reps.map(rep => `
+          <div class="rep-item">
+            <div class="rep-info">
+              <div class="rep-name">${rep.name}</div>
+              <div class="rep-email">${rep.email}</div>
+            </div>
+            <div class="rep-link" id="link-${rep.code}">${rep.link}</div>
+            <button class="copy-btn" onclick="copyLink('${rep.code}', this)">Copy Link</button>
+          </div>
+        `).join('');
+
+      } catch (err) {
+        console.error('Failed to load reps:', err);
+      }
+    }
+
+    async function loadStats() {
+      try {
+        const res = await fetch('/api/submissions?limit=1000');
+        const submissions = await res.json();
+
+        document.getElementById('totalSubmissions').textContent = submissions.length;
+
+        // Count today's submissions
+        const today = new Date().toDateString();
+        const todayCount = submissions.filter(s =>
+          new Date(s.created_at).toDateString() === today
+        ).length;
+        document.getElementById('todaySubmissions').textContent = todayCount;
+
+      } catch (err) {
+        console.error('Failed to load stats:', err);
+      }
+    }
+
+    function copyLink(code, btn) {
+      const linkEl = document.getElementById(`link-${code}`);
+      navigator.clipboard.writeText(linkEl.textContent).then(() => {
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = 'Copy Link';
+          btn.classList.remove('copied');
+        }, 2000);
+      });
+    }
+
+    loadReps();
+    loadStats();
+  </script>
+</body>
+</html>
