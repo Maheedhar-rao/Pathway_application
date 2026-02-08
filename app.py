@@ -7,6 +7,8 @@ Each sales rep gets a unique link that tracks their submissions.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import re
 import smtplib
@@ -82,6 +84,18 @@ def get_rep_info(rep_code: str) -> Optional[dict]:
     if not rep_code:
         return None
     return SALES_REPS.get(rep_code.lower().strip())
+
+def sign_rep_code(rep_code: str) -> str:
+    """Generate HMAC signature to prevent rep_code tampering."""
+    key = (os.environ.get("APP_SECRET", "dev-secret")).encode()
+    return hmac.new(key, rep_code.lower().strip().encode(), hashlib.sha256).hexdigest()
+
+def verify_rep_code(rep_code: str, signature: str) -> bool:
+    """Verify that rep_code has not been tampered with."""
+    if not rep_code or not signature:
+        return not rep_code  # no rep is valid (direct submission)
+    expected = sign_rep_code(rep_code)
+    return hmac.compare_digest(expected, signature)
 
 sb: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
@@ -573,7 +587,8 @@ def validate_fields(form: dict) -> dict:
 def home():
     rep_code = request.args.get("rep", "").strip()
     rep_info = get_rep_info(rep_code)
-    return render_template("form.html", rep_code=rep_code, rep_info=rep_info)
+    rep_sig = sign_rep_code(rep_code) if rep_code else ""
+    return render_template("form.html", rep_code=rep_code, rep_info=rep_info, rep_sig=rep_sig)
 
 @app.route("/thank-you")
 def thank_you():
@@ -597,8 +612,11 @@ def submit():
     # Normalize request.form into a clean dict
     form = {k: (v.strip() if isinstance(v, str) else v) for k, v in request.form.items()}
 
-    # Get rep info from hidden field
+    # Get rep info from hidden field — verify HMAC to prevent tampering
     rep_code = form.get("rep_code", "").strip()
+    rep_sig = form.get("rep_sig", "").strip()
+    if rep_code and not verify_rep_code(rep_code, rep_sig):
+        rep_code = ""  # reject tampered rep code
     rep_info = get_rep_info(rep_code)
 
     # Enforce default for has_owner_1 if not present
@@ -614,7 +632,8 @@ def submit():
         errors['bank_files'] = 'At least one bank statement is required'
 
     if errors:
-        return render_template("form.html", errors=errors, form=form, rep_code=rep_code, rep_info=rep_info), 400
+        rep_sig = sign_rep_code(rep_code) if rep_code else ""
+        return render_template("form.html", errors=errors, form=form, rep_code=rep_code, rep_info=rep_info, rep_sig=rep_sig), 400
 
     business_legal_name = form.get("business_legal_name") or ""
     industry = form.get("industry") or ""

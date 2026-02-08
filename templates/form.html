@@ -85,9 +85,10 @@
           method="POST"
           enctype="multipart/form-data"
           autocomplete="off">
-      <!-- Hidden rep tracking field -->
+      <!-- Hidden rep tracking field (HMAC-signed to prevent tampering) -->
       {% if rep_code %}
       <input type="hidden" name="rep_code" value="{{ rep_code }}" />
+      <input type="hidden" name="rep_sig" value="{{ rep_sig }}" />
       {% endif %}
 
       <div class="card-header">
