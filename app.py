@@ -32,7 +32,11 @@ try:
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+        Image, HRFlowable, BaseDocTemplate, Frame, PageTemplate
+    )
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
     PDF_ENABLED = True
 except ImportError:
     PDF_ENABLED = False
@@ -65,18 +69,12 @@ TEAM_EMAIL = os.environ.get("TEAM_EMAIL", "team@pathwaycatalyst.com")
 # Each rep has a unique code, name, and email
 # URL format: /?rep=<code>  e.g., /?rep=john
 SALES_REPS = {
-    "john": {"name": "John Smith", "email": "john@example.com"},
-    "sarah": {"name": "Sarah Johnson", "email": "sarah@example.com"},
-    "mike": {"name": "Mike Williams", "email": "mike@example.com"},
-    "emily": {"name": "Emily Davis", "email": "emily@example.com"},
-    "david": {"name": "David Brown", "email": "david@example.com"},
-    "lisa": {"name": "Lisa Miller", "email": "lisa@example.com"},
-    "james": {"name": "James Wilson", "email": "james@example.com"},
-    "anna": {"name": "Anna Taylor", "email": "anna@example.com"},
-    "chris": {"name": "Chris Anderson", "email": "chris@example.com"},
-    "kate": {"name": "Kate Thomas", "email": "kate@example.com"},
-    "yuly": {"name": "Yuly", "email": "tech@pathwaycatalyst.com"},
+    "yuly": {"name": "Yuly", "email": "deals@pathwaycatalyst.com"},
     "tom": {"name": "Tom", "email": "tom@pathwaycatalyst.com"},
+    "troy": {"name": "Troy", "email": "troy@pathwaycatalyst.com"},
+    "adrian": {"name": "Adrian", "email": "adrian@pathwaycatalyst.com"},
+    "frank": {"name": "Frank", "email": "frank@pathwaycatalyst.com"},
+    "andres": {"name": "Andres", "email": "andres@pathwaycatalyst.com"}
 }
 
 def get_rep_info(rep_code: str) -> Optional[dict]:
@@ -115,119 +113,217 @@ def _is_valid_fico(value: str) -> bool:
         return False
     return 300 <= n <= 850
 
+LOGO_PATH = APP_DIR / "static" / "pathway-logo.png"
+
+# Brand colours
+BRAND_BLUE = colors.HexColor('#1e40af')
+BRAND_LIGHT_BLUE = colors.HexColor('#3b82f6')
+BRAND_BG = colors.HexColor('#f0f7ff')
+BRAND_BORDER = colors.HexColor('#bfdbfe')
+BRAND_DARK = colors.HexColor('#1e293b')
+BRAND_GRAY = colors.HexColor('#64748b')
+
+def _pdf_header_footer(canvas, doc, submission_id):
+    """Draw logo header, divider lines, and 'Powered by CROC' footer on every page."""
+    canvas.saveState()
+    w, h = letter
+
+    # ── Header: logo + title ──
+    if LOGO_PATH.exists():
+        canvas.drawImage(str(LOGO_PATH), 0.6*inch, h - 1.05*inch, width=0.75*inch, height=0.75*inch, preserveAspectRatio=True, mask='auto')
+    canvas.setFont("Helvetica-Bold", 16)
+    canvas.setFillColor(BRAND_BLUE)
+    canvas.drawString(1.5*inch, h - 0.65*inch, "Pathway Catalyst")
+    canvas.setFont("Helvetica", 10)
+    canvas.setFillColor(BRAND_GRAY)
+    canvas.drawString(1.5*inch, h - 0.85*inch, "Business Financing Application")
+
+    # Header divider line
+    canvas.setStrokeColor(BRAND_LIGHT_BLUE)
+    canvas.setLineWidth(2)
+    canvas.line(0.5*inch, h - 1.15*inch, w - 0.5*inch, h - 1.15*inch)
+
+    # ── Footer ──
+    canvas.setStrokeColor(BRAND_BORDER)
+    canvas.setLineWidth(0.5)
+    canvas.line(0.5*inch, 0.55*inch, w - 0.5*inch, 0.55*inch)
+
+    # Left: Powered by CROC
+    canvas.setFont("Helvetica-Oblique", 8)
+    canvas.setFillColor(BRAND_GRAY)
+    canvas.drawString(0.6*inch, 0.35*inch, "Powered by CROC")
+
+    # Center: page number
+    canvas.setFont("Helvetica", 8)
+    canvas.drawCentredString(w / 2, 0.35*inch, f"Page {doc.page}")
+
+    # Right: application ID
+    canvas.setFont("Helvetica", 8)
+    canvas.drawRightString(w - 0.6*inch, 0.35*inch, f"Application ID: {submission_id}")
+
+    canvas.restoreState()
+
+
+def _styled_section_table(data, col_widths=None):
+    """Create a consistently styled two-column data table."""
+    if col_widths is None:
+        col_widths = [2.2*inch, 4.3*inch]
+    t = Table(data, colWidths=col_widths)
+    t.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('TEXTCOLOR', (0, 0), (0, -1), BRAND_DARK),
+        ('TEXTCOLOR', (1, 0), (1, -1), colors.HexColor('#334155')),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('LINEBELOW', (0, 0), (-1, -2), 0.25, BRAND_BORDER),
+        ('LINEBELOW', (0, -1), (-1, -1), 0.25, BRAND_BORDER),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('BACKGROUND', (0, 0), (-1, -1), BRAND_BG),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ('ROUNDEDCORNERS', [4, 4, 4, 4]),
+    ]))
+    return t
+
+
 def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str = None) -> BytesIO:
-    """Generate a PDF summary of the application."""
+    """Generate a professionally styled PDF summary of the application."""
     if not PDF_ENABLED:
         return None
 
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
+    w, h = letter
+
+    # Custom page template with header/footer
+    frame = Frame(0.6*inch, 0.75*inch, w - 1.2*inch, h - 2.0*inch, id='main')
+    template = PageTemplate(
+        id='branded',
+        frames=[frame],
+        onPage=lambda canvas, doc: _pdf_header_footer(canvas, doc, submission_id)
+    )
+    doc = BaseDocTemplate(buffer, pagesize=letter, title=f"Application {submission_id}")
+    doc.addPageTemplates([template])
+
     styles = getSampleStyleSheet()
 
     # Custom styles
-    title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=18, spaceAfter=20, textColor=colors.HexColor('#1e40af'))
-    section_style = ParagraphStyle('Section', parent=styles['Heading2'], fontSize=14, spaceBefore=15, spaceAfter=10, textColor=colors.HexColor('#1e40af'))
-    normal_style = styles['Normal']
+    section_style = ParagraphStyle(
+        'SectionHead', parent=styles['Heading2'],
+        fontSize=13, spaceBefore=18, spaceAfter=8,
+        textColor=BRAND_BLUE, borderPadding=(0, 0, 4, 0),
+    )
+    meta_style = ParagraphStyle(
+        'Meta', parent=styles['Normal'],
+        fontSize=10, textColor=BRAND_GRAY, spaceAfter=2,
+    )
+    consent_style = ParagraphStyle(
+        'Consent', parent=styles['Normal'],
+        fontSize=9, textColor=BRAND_GRAY, alignment=TA_CENTER, spaceBefore=20,
+    )
 
     elements = []
 
-    # Header
-    elements.append(Paragraph("Pathway Catalyst - Loan Application", title_style))
-    elements.append(Paragraph(f"Application ID: {submission_id}", normal_style))
-    elements.append(Paragraph(f"Submitted: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}", normal_style))
+    # ── Submission meta info ──
+    elements.append(Paragraph(f"<b>Application ID:</b> {submission_id}", meta_style))
+    elements.append(Paragraph(f"<b>Submitted:</b> {datetime.now().strftime('%B %d, %Y at %I:%M %p')}", meta_style))
     if rep_name:
-        elements.append(Paragraph(f"Sales Representative: {rep_name}", normal_style))
-    elements.append(Spacer(1, 20))
+        elements.append(Paragraph(f"<b>Sales Representative:</b> {rep_name}", meta_style))
+    elements.append(Spacer(1, 10))
+    elements.append(HRFlowable(width="100%", thickness=0.5, color=BRAND_BORDER, spaceAfter=6))
 
-    # Business Information
+    # ── Business Information ──
     elements.append(Paragraph("Business Information", section_style))
-    biz_data = [
-        ["Business Legal Name:", form_data.get("business_legal_name", "")],
-        ["DBA Name:", form_data.get("business_dba", "")],
-        ["Industry:", form_data.get("industry", "")],
-        ["Legal Entity:", form_data.get("legal_entity", "")],
-        ["Business Start Date:", form_data.get("business_start_date", "")],
-        ["EIN:", form_data.get("ein", "")],
-        ["Website:", form_data.get("company_website", "")],
-        ["Phone:", form_data.get("business_phone", "")],
-        ["Loan Amount:", f"${form_data.get('loan_amount', '0'):,}" if form_data.get('loan_amount') else ""],
-        ["Loan Purpose:", form_data.get("loan_purpose", "")],
-    ]
-    biz_table = Table(biz_data, colWidths=[2*inch, 4.5*inch])
-    biz_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-    ]))
-    elements.append(biz_table)
+    loan_amt = form_data.get('loan_amount', '')
+    try:
+        loan_display = f"${float(loan_amt):,.0f}" if loan_amt else ""
+    except (ValueError, TypeError):
+        loan_display = str(loan_amt)
 
-    # Company Address
+    biz_data = [
+        ["Business Legal Name", form_data.get("business_legal_name", "")],
+        ["DBA Name", form_data.get("business_dba", "")],
+        ["Industry", form_data.get("industry", "")],
+        ["Legal Entity", form_data.get("legal_entity", "")],
+        ["Business Start Date", form_data.get("business_start_date", "")],
+        ["EIN", form_data.get("ein", "")],
+        ["Website", form_data.get("company_website", "")],
+        ["Phone", form_data.get("business_phone", "")],
+        ["Requested Loan Amount", loan_display],
+        ["Loan Purpose", form_data.get("loan_purpose", "")],
+    ]
+    elements.append(_styled_section_table(biz_data))
+
+    # ── Company Address ──
     elements.append(Paragraph("Company Address", section_style))
     addr = f"{form_data.get('company_address1', '')} {form_data.get('company_address2', '')}".strip()
     city_state = f"{form_data.get('company_city', '')}, {form_data.get('company_state', '')} {form_data.get('company_zip', '')}"
-    elements.append(Paragraph(addr, normal_style))
-    elements.append(Paragraph(city_state, normal_style))
-    elements.append(Spacer(1, 10))
+    country = form_data.get('company_country', 'United States')
+    addr_data = [
+        ["Street", addr],
+        ["City / State / ZIP", city_state],
+        ["Country", country],
+    ]
+    elements.append(_styled_section_table(addr_data))
 
-    # Owner Information
+    # ── Primary Owner ──
     elements.append(Paragraph("Primary Owner", section_style))
     owner_data = [
-        ["Name:", f"{form_data.get('owner_0_first', '')} {form_data.get('owner_0_last', '')}"],
-        ["Ownership %:", f"{form_data.get('owner_0_pct', '')}%"],
-        ["DOB:", form_data.get("owner_0_dob", "")],
-        ["SSN:", form_data.get("owner_0_ssn", "")],
-        ["Email:", form_data.get("owner_0_email", "")],
-        ["Mobile:", form_data.get("owner_0_mobile", "")],
-        ["FICO:", form_data.get("owner_0_fico", "N/A")],
+        ["Name", f"{form_data.get('owner_0_first', '')} {form_data.get('owner_0_last', '')}"],
+        ["Ownership %", f"{form_data.get('owner_0_pct', '')}%"],
+        ["Date of Birth", form_data.get("owner_0_dob", "")],
+        ["SSN", form_data.get("owner_0_ssn", "")],
+        ["Email", form_data.get("owner_0_email", "")],
+        ["Mobile", form_data.get("owner_0_mobile", "")],
+        ["FICO Score", form_data.get("owner_0_fico", "N/A")],
+        ["MCA Balances", form_data.get("owner_0_mca_balances", "N/A")],
     ]
-    owner_table = Table(owner_data, colWidths=[2*inch, 4.5*inch])
-    owner_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-    ]))
-    elements.append(owner_table)
+    elements.append(_styled_section_table(owner_data))
 
-    # Second Owner (if present)
+    # Owner home address
+    owner_addr = f"{form_data.get('owner_0_addr1', '')} {form_data.get('owner_0_addr2', '')}".strip()
+    owner_city_state = f"{form_data.get('owner_0_city', '')}, {form_data.get('owner_0_state', '')} {form_data.get('owner_0_zip', '')}"
+    if owner_addr:
+        elements.append(Paragraph("Owner Home Address", section_style))
+        elements.append(_styled_section_table([
+            ["Street", owner_addr],
+            ["City / State / ZIP", owner_city_state],
+        ]))
+
+    # ── Second Owner (if present) ──
     if form_data.get("has_owner_1") == "Yes":
         elements.append(Paragraph("Second Owner", section_style))
         owner2_data = [
-            ["Name:", f"{form_data.get('owner_1_first', '')} {form_data.get('owner_1_last', '')}"],
-            ["Ownership %:", f"{form_data.get('owner_1_pct', '')}%"],
-            ["DOB:", form_data.get("owner_1_dob", "")],
-            ["SSN:", form_data.get("owner_1_ssn", "")],
-            ["Email:", form_data.get("owner_1_email", "")],
-            ["Mobile:", form_data.get("owner_1_mobile", "")],
+            ["Name", f"{form_data.get('owner_1_first', '')} {form_data.get('owner_1_last', '')}"],
+            ["Ownership %", f"{form_data.get('owner_1_pct', '')}%"],
+            ["Date of Birth", form_data.get("owner_1_dob", "")],
+            ["SSN", form_data.get("owner_1_ssn", "")],
+            ["Email", form_data.get("owner_1_email", "")],
+            ["Mobile", form_data.get("owner_1_mobile", "")],
+            ["FICO Score", form_data.get("owner_1_fico", "N/A")],
+            ["MCA Balances", form_data.get("owner_1_mca_balances", "N/A")],
         ]
-        owner2_table = Table(owner2_data, colWidths=[2*inch, 4.5*inch])
-        owner2_table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ]))
-        elements.append(owner2_table)
+        elements.append(_styled_section_table(owner2_data))
 
-    # Property Information
-    elements.append(Paragraph("Property Information", section_style))
+    # ── Property Information ──
+    elements.append(Paragraph("Property &amp; Location", section_style))
     prop_data = [
-        ["Owns Real Estate:", form_data.get("own_real_estate", "")],
-        ["Own Home Location:", form_data.get("own_home_location", "")],
-        ["Own Business Location:", form_data.get("own_business_location", "")],
-        ["Residence:", form_data.get("residence_tenure", "N/A")],
-        ["Business Location:", form_data.get("business_location_tenure", "N/A")],
+        ["Owns Real Estate", form_data.get("own_real_estate", "")],
+        ["Own Home Location", form_data.get("own_home_location", "")],
+        ["Own Business Location", form_data.get("own_business_location", "")],
+        ["Residence Tenure", form_data.get("residence_tenure", "N/A")],
+        ["Business Location Tenure", form_data.get("business_location_tenure", "N/A")],
     ]
-    prop_table = Table(prop_data, colWidths=[2*inch, 4.5*inch])
-    prop_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-    ]))
-    elements.append(prop_table)
+    elements.append(_styled_section_table(prop_data))
 
-    # E-Sign Consent
-    elements.append(Spacer(1, 20))
-    elements.append(Paragraph("Electronic Signature Consent: Yes", normal_style))
+    # ── E-Sign Consent ──
+    elements.append(Spacer(1, 16))
+    elements.append(HRFlowable(width="100%", thickness=0.5, color=BRAND_BORDER, spaceBefore=4, spaceAfter=8))
+    elements.append(Paragraph(
+        "Electronic Signature Consent: <b>Yes</b> &mdash; The applicant has agreed to electronic records and signatures.",
+        consent_style
+    ))
 
     doc.build(elements)
     buffer.seek(0)
@@ -239,9 +335,10 @@ def send_email_with_pdf(
     business_name: str,
     pdf_buffer: BytesIO,
     submission_id: int,
-    rep_name: str = None
+    rep_name: str = None,
+    attached_files: List[Path] = None
 ):
-    """Send email with PDF attachment to specified recipients."""
+    """Send email with PDF attachment and uploaded documents to specified recipients."""
     if not EMAIL_ENABLED:
         print(f"Email disabled. Would send to {', '.join(to_emails)}")
         return False
@@ -257,6 +354,7 @@ def send_email_with_pdf(
 
         # Email body
         rep_line = f"\nReferred by: {rep_name}" if rep_name else "\nDirect submission (no rep)"
+        doc_count = len(attached_files) if attached_files else 0
         body = f"""
 New Loan Application Received
 
@@ -264,7 +362,7 @@ Business: {business_name}
 Application ID: {submission_id}
 Submitted: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}{rep_line}
 
-Please find the application summary attached as a PDF.
+Please find the application summary and {doc_count} uploaded document(s) attached.
 
 You can view the full details in the admin dashboard.
 
@@ -273,12 +371,24 @@ Pathway Catalyst System
         """
         msg.attach(MIMEText(body, 'plain'))
 
-        # Attach PDF - need to read and reset buffer for multiple sends
+        # Attach PDF summary
         if pdf_buffer:
             pdf_buffer.seek(0)
             pdf_attachment = MIMEApplication(pdf_buffer.read(), _subtype='pdf')
             pdf_attachment.add_header('Content-Disposition', 'attachment', filename=f'application_{submission_id}.pdf')
             msg.attach(pdf_attachment)
+
+        # Attach uploaded documents (bank statements, etc.)
+        if attached_files:
+            for file_path in attached_files:
+                if file_path.exists():
+                    with open(file_path, 'rb') as fp:
+                        file_attachment = MIMEApplication(fp.read(), _subtype='pdf')
+                        file_attachment.add_header(
+                            'Content-Disposition', 'attachment',
+                            filename=file_path.name
+                        )
+                        msg.attach(file_attachment)
 
         # Send email
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
@@ -460,12 +570,14 @@ def submit():
     submission_id = ins.data[0]["id"]
 
     # Save initial bank statements locally + metadata to Supabase
+    saved_files: List[Path] = []
     for f in request.files.getlist("bank_files"):
         if not f or not f.filename:
             continue
         safe = f.filename.replace("/", "_").replace("\\", "_")
         dest = UPLOAD_DIR / f"{submission_id}__bank_statement__{safe}"
         f.save(dest)
+        saved_files.append(dest)
         size = dest.stat().st_size
         sb.table("application_files").insert({
             "application_id": submission_id,
@@ -492,7 +604,8 @@ def submit():
                     business_name=business_legal_name,
                     pdf_buffer=pdf_buffer,
                     submission_id=submission_id,
-                    rep_name=rep_name
+                    rep_name=rep_name,
+                    attached_files=saved_files
                 )
         except Exception as e:
             print(f"Failed to generate/send PDF: {e}")
