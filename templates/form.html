@@ -562,9 +562,9 @@
           <input id="bank_files" name="bank_files" type="file" accept="application/pdf" multiple required />
         </div>
 
-        <!-- Added: Authorization + e-sign -->
+        <!-- Authorization + Hand Signature -->
         <div class="section-title" style="margin-top:18px">
-          <span class="dot"></span><h3>Authorization</h3>
+          <span class="dot"></span><h3>Authorization &amp; Signature</h3>
         </div>
 
         <div class="card" style="margin: 12px 0; padding: 14px;">
@@ -582,6 +582,36 @@
                    {% if form and form.get('esign_consent')=='Yes' %}checked{% endif %} />
             <span>I agree and provide my electronic signature.</span>
           </label>
+        </div>
+
+        <!-- Signature Pad -->
+        <div class="signature-section">
+          <div class="grid cols-2" style="gap:20px;align-items:start;">
+            <div class="field">
+              <label>Sign Below <span style="color:var(--danger);">*</span></label>
+              <div class="sig-pad-wrap">
+                <canvas id="signatureCanvas" width="480" height="180"></canvas>
+                <button type="button" id="clearSigBtn" class="btn-clear-sig" title="Clear signature">Clear</button>
+              </div>
+              <input type="hidden" name="signature_data" id="signatureData" required />
+              <p class="sig-hint">Use your mouse or finger to sign above</p>
+            </div>
+            <div class="field">
+              <label>Date of Signature <span style="color:var(--danger);">*</span></label>
+              <input type="date"
+                     name="signature_date"
+                     id="signatureDate"
+                     value="{{ (form.get('signature_date') if form else '') }}"
+                     required />
+              <div style="margin-top:16px;">
+                <label>Print Name <span style="color:var(--danger);">*</span></label>
+                <input name="signature_print_name"
+                       placeholder="Full legal name"
+                       value="{{ (form.get('signature_print_name') if form else '') }}"
+                       required />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -695,6 +725,132 @@
       window.addEventListener('beforeunload', function () {
         try { form.reset(); } catch (_) {}
       });
+    })();
+
+    // ── Signature Pad ──
+    (function () {
+      const canvas = document.getElementById('signatureCanvas');
+      const hiddenInput = document.getElementById('signatureData');
+      const clearBtn = document.getElementById('clearSigBtn');
+      const dateInput = document.getElementById('signatureDate');
+      const wrap = canvas ? canvas.parentElement : null;
+      if (!canvas || !hiddenInput) return;
+
+      const ctx = canvas.getContext('2d');
+      let drawing = false;
+      let hasSigned = false;
+
+      // High-DPI scaling
+      function scaleCanvas() {
+        const rect = canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        ctx.scale(dpr, dpr);
+        canvas.style.width = rect.width + 'px';
+        canvas.style.height = rect.height + 'px';
+        // Pen settings
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+      }
+      scaleCanvas();
+      window.addEventListener('resize', function () {
+        const data = hasSigned ? canvas.toDataURL('image/png') : null;
+        scaleCanvas();
+        if (data && hasSigned) {
+          const img = new window.Image();
+          img.onload = function () {
+            const rect = canvas.getBoundingClientRect();
+            ctx.drawImage(img, 0, 0, rect.width, rect.height);
+          };
+          img.src = data;
+        }
+      });
+
+      // Auto-fill today's date if empty
+      if (dateInput && !dateInput.value) {
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        const d = String(now.getDate()).padStart(2, '0');
+        dateInput.value = y + '-' + m + '-' + d;
+      }
+
+      function getPos(e) {
+        const rect = canvas.getBoundingClientRect();
+        const touch = e.touches ? e.touches[0] : e;
+        return {
+          x: touch.clientX - rect.left,
+          y: touch.clientY - rect.top
+        };
+      }
+
+      function startDraw(e) {
+        e.preventDefault();
+        drawing = true;
+        if (wrap) wrap.classList.add('signing');
+        const pos = getPos(e);
+        ctx.beginPath();
+        ctx.moveTo(pos.x, pos.y);
+      }
+
+      function draw(e) {
+        if (!drawing) return;
+        e.preventDefault();
+        const pos = getPos(e);
+        ctx.lineTo(pos.x, pos.y);
+        ctx.stroke();
+        hasSigned = true;
+      }
+
+      function endDraw(e) {
+        if (!drawing) return;
+        e.preventDefault();
+        drawing = false;
+        if (wrap) wrap.classList.remove('signing');
+        if (hasSigned) {
+          if (wrap) wrap.classList.add('has-sig');
+          hiddenInput.value = canvas.toDataURL('image/png');
+        }
+      }
+
+      // Mouse events
+      canvas.addEventListener('mousedown', startDraw);
+      canvas.addEventListener('mousemove', draw);
+      canvas.addEventListener('mouseup', endDraw);
+      canvas.addEventListener('mouseleave', endDraw);
+
+      // Touch events
+      canvas.addEventListener('touchstart', startDraw, { passive: false });
+      canvas.addEventListener('touchmove', draw, { passive: false });
+      canvas.addEventListener('touchend', endDraw);
+      canvas.addEventListener('touchcancel', endDraw);
+
+      // Clear button
+      if (clearBtn) {
+        clearBtn.addEventListener('click', function () {
+          const rect = canvas.getBoundingClientRect();
+          ctx.clearRect(0, 0, rect.width, rect.height);
+          hasSigned = false;
+          hiddenInput.value = '';
+          if (wrap) wrap.classList.remove('has-sig');
+        });
+      }
+
+      // Before submit — ensure signature is captured
+      const form = document.getElementById('appForm');
+      if (form) {
+        form.addEventListener('submit', function (e) {
+          if (!hasSigned || !hiddenInput.value) {
+            e.preventDefault();
+            alert('Please sign the application before submitting.');
+            canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return false;
+          }
+        });
+      }
     })();
   </script>
 </body>

@@ -317,13 +317,33 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
     ]
     elements.append(_styled_section_table(prop_data))
 
-    # ── E-Sign Consent ──
-    elements.append(Spacer(1, 16))
-    elements.append(HRFlowable(width="100%", thickness=0.5, color=BRAND_BORDER, spaceBefore=4, spaceAfter=8))
+    # ── Signature & Authorization ──
+    elements.append(Paragraph("Authorization &amp; Signature", section_style))
     elements.append(Paragraph(
-        "Electronic Signature Consent: <b>Yes</b> &mdash; The applicant has agreed to electronic records and signatures.",
-        consent_style
+        "The applicant has agreed to electronic records and signatures as permitted under applicable law.",
+        ParagraphStyle('AuthText', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY, spaceAfter=10)
     ))
+
+    sig_info = [
+        ["Print Name", form_data.get("signature_print_name", "")],
+        ["Date Signed", form_data.get("signature_date", "")],
+    ]
+    elements.append(_styled_section_table(sig_info))
+
+    # Render hand signature image
+    sig_data = form_data.get("signature_data", "")
+    if sig_data and sig_data.startswith("data:image/png;base64,"):
+        import base64 as _b64
+        raw = _b64.b64decode(sig_data.split(",", 1)[1])
+        sig_buf = BytesIO(raw)
+        sig_img = Image(sig_buf, width=3.2*inch, height=1.2*inch)
+        sig_img.hAlign = 'LEFT'
+        elements.append(Spacer(1, 8))
+        elements.append(sig_img)
+        elements.append(HRFlowable(width="50%", thickness=0.5, color=BRAND_DARK, spaceAfter=4))
+        elements.append(Paragraph("Applicant Signature", ParagraphStyle(
+            'SigLabel', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY
+        )))
 
     doc.build(elements)
     buffer.seek(0)
@@ -347,29 +367,99 @@ def send_email_with_pdf(
         return False
 
     try:
-        msg = MIMEMultipart()
+        msg = MIMEMultipart('mixed')
         msg['From'] = EMAIL_FROM
         msg['To'] = ', '.join(to_emails)
         msg['Subject'] = f"New Application: {business_name} (ID: {submission_id})"
 
         # Email body
-        rep_line = f"\nReferred by: {rep_name}" if rep_name else "\nDirect submission (no rep)"
+        rep_line = f"Referred by: {rep_name}" if rep_name else "Direct submission (no rep)"
         doc_count = len(attached_files) if attached_files else 0
-        body = f"""
-New Loan Application Received
+        submitted = datetime.now().strftime('%B %d, %Y at %I:%M %p')
 
-Business: {business_name}
-Application ID: {submission_id}
-Submitted: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}{rep_line}
+        html_body = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
 
-Please find the application summary and {doc_count} uploaded document(s) attached.
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#1e40af 0%,#3b82f6 100%);padding:28px 32px;text-align:center;">
+            <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700;">Pathway Catalyst</h1>
+            <p style="margin:6px 0 0;color:#bfdbfe;font-size:13px;">Business Financing Application</p>
+          </td>
+        </tr>
 
-You can view the full details in the admin dashboard.
+        <!-- Body -->
+        <tr>
+          <td style="padding:28px 32px;">
 
-Best regards,
-Pathway Catalyst System
+            <!-- Alert badge -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f7ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:24px;">
+              <tr>
+                <td style="padding:14px 18px;">
+                  <p style="margin:0;font-size:15px;font-weight:600;color:#1e40af;">New Loan Application Received</p>
+                </td>
+              </tr>
+            </table>
+
+            <!-- Details table -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px;">
+              <tr>
+                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;width:140px;">Business</td>
+                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;font-weight:600;">{business_name}</td>
+              </tr>
+              <tr>
+                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;">Application ID</td>
+                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;font-weight:600;">{submission_id}</td>
+              </tr>
+              <tr>
+                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;">Submitted</td>
+                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;">{submitted}</td>
+              </tr>
+              <tr>
+                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;">Representative</td>
+                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;">{rep_line}</td>
+              </tr>
+              <tr>
+                <td style="padding:8px 0;color:#64748b;font-size:13px;">Attachments</td>
+                <td style="padding:8px 0;color:#1e293b;font-size:14px;">Application PDF + {doc_count} bank statement(s)</td>
+              </tr>
+            </table>
+
+            <p style="color:#475569;font-size:14px;line-height:1.6;margin:0 0 20px;">
+              Please find the complete application summary and uploaded bank statements attached to this email.
+              You can also view full details in the admin dashboard.
+            </p>
+
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="background:#f8fafc;padding:18px 32px;border-top:1px solid #e2e8f0;text-align:center;">
+            <p style="margin:0 0 4px;color:#64748b;font-size:12px;">Pathway Catalyst &mdash; See the Pathway. Be the Catalyst.</p>
+            <p style="margin:0;color:#94a3b8;font-size:11px;font-style:italic;">Powered by CROC</p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>
         """
-        msg.attach(MIMEText(body, 'plain'))
+
+        # Attach both HTML and plain-text fallback
+        alt_part = MIMEMultipart('alternative')
+        plain_text = f"Congratulations! New Application Received\n\nBusiness: {business_name}\nApplication ID: {submission_id}\nSubmitted: {submitted}\n{rep_line}\n\nAttachments: Application PDF + {doc_count} bank statement(s)\n\nPowered by CROC"
+        alt_part.attach(MIMEText(plain_text, 'plain'))
+        alt_part.attach(MIMEText(html_body, 'html'))
+        msg.attach(alt_part)
 
         # Attach PDF summary
         if pdf_buffer:
@@ -412,8 +502,8 @@ def validate_fields(form: dict) -> dict:
         'company_address1','company_city','company_state','company_zip',
         'owner_0_first','owner_0_last','owner_0_pct','owner_0_dob','owner_0_ssn','owner_0_email','owner_0_mobile',
         'own_real_estate','own_home_location','own_business_location',
-        # New required field from PDF concept
         'esign_consent',
+        'signature_data','signature_date','signature_print_name',
     ]
     for k in req:
         if not form.get(k):
