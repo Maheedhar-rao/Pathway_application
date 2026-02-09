@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import re
 import smtplib
+import traceback
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
@@ -42,7 +44,10 @@ try:
     PDF_ENABLED = True
 except ImportError:
     PDF_ENABLED = False
-    print("Warning: reportlab not installed. PDF generation disabled. Run: pip install reportlab")
+    logging.warning("reportlab not installed. PDF generation disabled. Run: pip install reportlab")
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+log = logging.getLogger(__name__)
 
 load_dotenv(find_dotenv())
 
@@ -374,11 +379,14 @@ def send_email_with_pdf(
 ):
     """Send email with PDF attachment and uploaded documents to specified recipients."""
     if not EMAIL_ENABLED:
-        print(f"Email disabled. Would send to {', '.join(to_emails)}")
+        log.warning("EMAIL DISABLED – SMTP_USER or SMTP_PASS not set. Would send to %s", ', '.join(to_emails))
         return False
 
     if not to_emails:
+        log.warning("No recipients provided for email")
         return False
+
+    log.info("Sending email to %s (SMTP %s:%s, user=%s)", ', '.join(to_emails), SMTP_HOST, SMTP_PORT, SMTP_USER)
 
     try:
         msg = MIMEMultipart('mixed')
@@ -500,10 +508,10 @@ def send_email_with_pdf(
             server.login(SMTP_USER, SMTP_PASS)
             server.send_message(msg)
 
-        print(f"Email sent to {', '.join(to_emails)}")
+        log.info("Email sent successfully to %s", ', '.join(to_emails))
         return True
     except Exception as e:
-        print(f"Failed to send email: {e}")
+        log.error("Failed to send email to %s: %s\n%s", ', '.join(to_emails), e, traceback.format_exc())
         return False
 
 
@@ -623,6 +631,17 @@ def submit():
     if "has_owner_1" not in form or not form.get("has_owner_1"):
         form["has_owner_1"] = "No"
 
+    # Normalize SSN/EIN: strip non-digits, re-insert dashes so validation works
+    for ssn_key in ('owner_0_ssn', 'owner_1_ssn'):
+        raw = form.get(ssn_key, '')
+        digits = re.sub(r'\D', '', raw)
+        if len(digits) == 9:
+            form[ssn_key] = f"{digits[:3]}-{digits[3:5]}-{digits[5:]}"
+    raw_ein = form.get('ein', '')
+    ein_digits = re.sub(r'\D', '', raw_ein)
+    if len(ein_digits) == 9:
+        form['ein'] = f"{ein_digits[:2]}-{ein_digits[2:]}"
+
     errors = validate_fields(form)
 
     # Validate bank statement upload (required)
@@ -700,6 +719,7 @@ def submit():
     if PDF_ENABLED:
         try:
             rep_name = rep_info["name"] if rep_info else None
+            log.info("Generating PDF for submission %s (rep=%s)", submission_id, rep_name)
             pdf_buffer = generate_application_pdf(form, submission_id, rep_name)
 
             if pdf_buffer:
@@ -708,6 +728,7 @@ def submit():
                 if rep_info and rep_info["email"]:
                     recipients.append(rep_info["email"])
 
+                log.info("Sending email with %d attachments to %s", len(saved_files), recipients)
                 send_email_with_pdf(
                     to_emails=recipients,
                     business_name=business_legal_name,
@@ -716,8 +737,12 @@ def submit():
                     rep_name=rep_name,
                     attached_files=saved_files
                 )
+            else:
+                log.warning("PDF generation returned None for submission %s", submission_id)
         except Exception as e:
-            print(f"Failed to generate/send PDF: {e}")
+            log.error("Failed to generate/send PDF for submission %s: %s\n%s", submission_id, e, traceback.format_exc())
+    else:
+        log.warning("PDF_ENABLED is False – reportlab not installed. Skipping PDF/email for submission %s", submission_id)
 
     return redirect(url_for("thank_you", sid=submission_id))
 

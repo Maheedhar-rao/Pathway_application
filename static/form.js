@@ -173,6 +173,57 @@
     return (sel.value || "").trim() === "Yes";
   }
 
+  // Auto-format SSN: user types digits, dashes inserted automatically
+  function autoFormatSSN(el) {
+    if (!el) return;
+    el.addEventListener('input', function() {
+      var cursorPos = this.selectionStart;
+      var oldLen = this.value.length;
+      var digits = this.value.replace(/\D/g, '').substring(0, 9);
+      var formatted;
+      if (digits.length > 5) {
+        formatted = digits.substring(0, 3) + '-' + digits.substring(3, 5) + '-' + digits.substring(5);
+      } else if (digits.length > 3) {
+        formatted = digits.substring(0, 3) + '-' + digits.substring(3);
+      } else {
+        formatted = digits;
+      }
+      if (this.value !== formatted) {
+        this.value = formatted;
+        var newPos = cursorPos + (formatted.length - oldLen);
+        if (newPos < 0) newPos = 0;
+        this.setSelectionRange(newPos, newPos);
+      }
+    });
+  }
+
+  // Auto-format EIN: user types digits, dash inserted after 2nd digit
+  function autoFormatEIN(el) {
+    if (!el) return;
+    el.addEventListener('input', function() {
+      var cursorPos = this.selectionStart;
+      var oldLen = this.value.length;
+      var digits = this.value.replace(/\D/g, '').substring(0, 9);
+      var formatted;
+      if (digits.length > 2) {
+        formatted = digits.substring(0, 2) + '-' + digits.substring(2);
+      } else {
+        formatted = digits;
+      }
+      if (this.value !== formatted) {
+        this.value = formatted;
+        var newPos = cursorPos + (formatted.length - oldLen);
+        if (newPos < 0) newPos = 0;
+        this.setSelectionRange(newPos, newPos);
+      }
+    });
+  }
+
+  // Apply auto-formatting (runs before regex validation on the same input event)
+  autoFormatSSN(document.querySelector('input[name="owner_0_ssn"]'));
+  autoFormatSSN(document.querySelector('input[name="owner_1_ssn"]'));
+  autoFormatEIN(document.querySelector('input[name="ein"]'));
+
   // Base validations
   bindRegexValidation('input[name="ein"]', EIN_RE);
   bindRegexValidation('input[name="owner_0_ssn"]', SSN_RE);
