@@ -511,50 +511,21 @@
             <label>Own Home Location?</label>
             <select name="own_home_location" required>
               <option value="">Select</option>
-              <option value="Yes" {% if form and form.get('own_home_location')=='Yes' %}selected{% endif %}>Yes</option>
-              <option value="No" {% if form and form.get('own_home_location')=='No' %}selected{% endif %}>No</option>
+              <option value="Own" {% if form and form.get('own_home_location')=='Own' %}selected{% endif %}>Own</option>
+              <option value="Rent" {% if form and form.get('own_home_location')=='Rent' %}selected{% endif %}>Rent</option>
             </select>
           </div>
           <div class="field">
             <label>Own Business Location?</label>
             <select name="own_business_location" required>
               <option value="">Select</option>
-              <option value="Yes" {% if form and form.get('own_business_location')=='Yes' %}selected{% endif %}>Yes</option>
-              <option value="No" {% if form and form.get('own_business_location')=='No' %}selected{% endif %}>No</option>
+              <option value="Own" {% if form and form.get('own_business_location')=='Own' %}selected{% endif %}>Own</option>
+              <option value="Rent" {% if form and form.get('own_business_location')=='Rent' %}selected{% endif %}>Rent</option>
             </select>
           </div>
         </div>
 
-        <!-- Conditionally shown when Yes -->
-        <div class="grid cols-3" id="tenureSection" style="display:none;">
-          <br /><br />
-          <div class="field">
-            <label>Residence</label>
-            <div class="inline">
-              <label class="inline">
-                <input type="radio" name="residence_tenure" value="Own" {% if form and form.get('residence_tenure')=='Own' %}checked{% endif %} />
-                Own
-              </label>
-              <label class="inline">
-                <input type="radio" name="residence_tenure" value="Rent" {% if form and form.get('residence_tenure')=='Rent' %}checked{% endif %} />
-                Rent
-              </label>
-            </div>
-          </div>
-          <div class="field">
-            <label>Business Location</label>
-            <div class="inline">
-              <label class="inline">
-                <input type="radio" name="business_location_tenure" value="Own" {% if form and form.get('business_location_tenure')=='Own' %}checked{% endif %} />
-                Own
-              </label>
-              <label class="inline">
-                <input type="radio" name="business_location_tenure" value="Rent" {% if form and form.get('business_location_tenure')=='Rent' %}checked{% endif %} />
-                Rent
-              </label>
-            </div>
-          </div>
-        </div>
+        
 
         <!-- Uploads -->
         <div class="section-title"><span class="dot"></span><h3>Upload Bank Statements</h3></div>
