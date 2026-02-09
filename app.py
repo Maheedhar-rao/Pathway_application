@@ -25,7 +25,6 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import List, Optional
-from urllib.parse import quote
 
 import socket as _socket
 
@@ -69,8 +68,8 @@ log = logging.getLogger(__name__)
 load_dotenv(find_dotenv())
 
 APP_DIR = Path(__file__).resolve().parent
-UPLOAD_DIR = APP_DIR / "uploads"
-UPLOAD_DIR.mkdir(exist_ok=True)
+STORAGE_BUCKET = "application-docs"
+SIGNED_URL_EXPIRY = 3600  # 1 hour
 
 # ---- Config (no DB URL needed) ----------------------------------------------
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -123,6 +122,25 @@ def verify_rep_code(rep_code: str, signature: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 sb: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
+
+# ---- Supabase Storage helpers ------------------------------------------------
+def _upload_to_storage(file_data: bytes, bucket_path: str, content_type: str = "application/pdf") -> int:
+    """Upload file bytes to Supabase Storage. Returns size in bytes."""
+    sb.storage.from_(STORAGE_BUCKET).upload(
+        path=bucket_path,
+        file=file_data,
+        file_options={"content-type": content_type, "x-upsert": "true"},
+    )
+    return len(file_data)
+
+def _download_from_storage(bucket_path: str) -> bytes:
+    """Download file bytes from Supabase Storage."""
+    return sb.storage.from_(STORAGE_BUCKET).download(bucket_path)
+
+def _get_signed_url(bucket_path: str, expires_in: int = SIGNED_URL_EXPIRY) -> str:
+    """Generate a time-limited signed URL for a private file."""
+    result = sb.storage.from_(STORAGE_BUCKET).create_signed_url(bucket_path, expires_in)
+    return result["signedURL"]
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("APP_SECRET", "dev-secret")
@@ -494,13 +512,15 @@ def _send_via_resend(to_emails, subject, html_body, plain_text, pdf_buffer, subm
             "content": base64.b64encode(pdf_buffer.read()).decode(),
         })
     if attached_files:
-        for fp in attached_files:
-            if fp.exists():
-                with open(fp, 'rb') as f:
-                    attachments.append({
-                        "filename": fp.name,
-                        "content": base64.b64encode(f.read()).decode(),
-                    })
+        for bp in attached_files:
+            try:
+                file_bytes = _download_from_storage(bp)
+                attachments.append({
+                    "filename": bp.split("/")[-1],
+                    "content": base64.b64encode(file_bytes).decode(),
+                })
+            except Exception as e:
+                log.error("Failed to download attachment %s: %s", bp, e)
 
     payload = json.dumps({
         "from": EMAIL_FROM,
@@ -547,13 +567,15 @@ def _send_via_smtp(to_emails, subject, html_body, plain_text, pdf_buffer, submis
         msg.attach(pdf_attachment)
 
     if attached_files:
-        for file_path in attached_files:
-            if file_path.exists():
-                with open(file_path, 'rb') as fp:
-                    file_attachment = MIMEApplication(fp.read(), _subtype='pdf')
-                    file_attachment.add_header('Content-Disposition', 'attachment',
-                                              filename=file_path.name)
-                    msg.attach(file_attachment)
+        for bp in attached_files:
+            try:
+                file_bytes = _download_from_storage(bp)
+                file_attachment = MIMEApplication(file_bytes, _subtype='pdf')
+                file_attachment.add_header('Content-Disposition', 'attachment',
+                                          filename=bp.split("/")[-1])
+                msg.attach(file_attachment)
+            except Exception as e:
+                log.error("Failed to download attachment %s for SMTP: %s", bp, e)
 
     # Port 465 uses implicit SSL; port 587 uses STARTTLS
     if SMTP_PORT == 465:
@@ -583,13 +605,15 @@ def _send_via_supabase_fn(to_emails, subject, html_body, plain_text, pdf_buffer,
             "content": base64.b64encode(pdf_buffer.read()).decode(),
         })
     if attached_files:
-        for fp in attached_files:
-            if fp.exists():
-                with open(fp, 'rb') as f:
-                    attachments.append({
-                        "filename": fp.name,
-                        "content": base64.b64encode(f.read()).decode(),
-                    })
+        for bp in attached_files:
+            try:
+                file_bytes = _download_from_storage(bp)
+                attachments.append({
+                    "filename": bp.split("/")[-1],
+                    "content": base64.b64encode(file_bytes).decode(),
+                })
+            except Exception as e:
+                log.error("Failed to download attachment %s: %s", bp, e)
 
     payload = json.dumps({
         "from": EMAIL_FROM,
@@ -623,7 +647,7 @@ def send_email_with_pdf(
     pdf_buffer: BytesIO,
     submission_id: int,
     rep_name: str = None,
-    attached_files: List[Path] = None
+    attached_files: List[str] = None
 ):
     """Send email with PDF + attachments. Priority: Resend → Supabase Edge Fn → SMTP."""
     if not RESEND_API_KEY and not EMAIL_ENABLED:
@@ -757,11 +781,6 @@ def thank_you():
             business = rows[0].get("business_legal_name")
     return render_template("thank_you.html", sid=sid, business=business)
 
-# Serve uploaded files inline (so PDFs preview)
-@app.route("/uploads/<path:path>")
-def uploaded_file(path: str):
-    return send_from_directory(UPLOAD_DIR, path, as_attachment=False)
-
 # -------------------- Submission Endpoints --------------------
 @app.route("/submit", methods=["POST"])
 def submit():
@@ -845,20 +864,21 @@ def submit():
         abort(500, description="Insert failed")
     submission_id = ins.data[0]["id"]
 
-    # Save initial bank statements locally + metadata to Supabase
-    saved_files: List[Path] = []
+    # Upload bank statements to Supabase Storage + metadata to DB
+    saved_paths: List[str] = []
     for f in request.files.getlist("bank_files"):
         if not f or not f.filename:
             continue
         safe = f.filename.replace("/", "_").replace("\\", "_")
-        dest = UPLOAD_DIR / f"{submission_id}__bank_statement__{safe}"
-        f.save(dest)
-        saved_files.append(dest)
-        size = dest.stat().st_size
+        bucket_path = f"{submission_id}/bank_statement/{safe}"
+        file_bytes = f.read()
+        content_type = f.content_type or "application/pdf"
+        size = _upload_to_storage(file_bytes, bucket_path, content_type)
+        saved_paths.append(bucket_path)
         sb.table("application_files").insert({
             "application_id": submission_id,
             "filename": safe,
-            "storage_path": str(dest),
+            "storage_path": bucket_path,
             "size_bytes": size,
             "doc_type": "bank_statement",
         }).execute()
@@ -889,7 +909,7 @@ def submit():
                 threading.Thread(
                     target=_bg_send,
                     args=(recipients, business_legal_name, pdf_buffer,
-                          submission_id, rep_name, saved_files),
+                          submission_id, rep_name, saved_paths),
                     daemon=True,
                 ).start()
                 log.info("Email queued in background for submission %s → %s", submission_id, recipients)
@@ -912,13 +932,14 @@ def upload_docs():
         f = request.files.get(field)
         if f and f.filename:
             safe = f.filename.replace("/", "_").replace("\\", "_")
-            dest = UPLOAD_DIR / f"{sid}__{dtype}__{safe}"
-            f.save(dest)
-            size = dest.stat().st_size
+            bucket_path = f"{sid}/{dtype}/{safe}"
+            file_bytes = f.read()
+            content_type = f.content_type or "application/pdf"
+            size = _upload_to_storage(file_bytes, bucket_path, content_type)
             sb.table("application_files").insert({
                 "application_id": sid,
                 "filename": safe,
-                "storage_path": str(dest),
+                "storage_path": bucket_path,
                 "size_bytes": size,
                 "doc_type": dtype,
             }).execute()
@@ -973,8 +994,11 @@ def api_submission_detail(sid: int):
     ).eq("application_id", sid).execute()
     files = files_res.data or []
     for f in files:
-        path_name = Path(f["storage_path"]).name
-        f["url"] = f"/uploads/{quote(path_name)}"
+        try:
+            f["url"] = _get_signed_url(f["storage_path"])
+        except Exception as e:
+            log.error("Failed to generate signed URL for %s: %s", f["storage_path"], e)
+            f["url"] = ""
 
     app_row["files"] = files
     return jsonify(app_row)
