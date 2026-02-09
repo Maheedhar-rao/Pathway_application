@@ -602,40 +602,6 @@
 
   <!-- Toggle and refresh logic -->
   <script>
-    // Show or hide Residence and Business Location based on Own Real Estate
-    (function () {
-      const ownSel  = document.querySelector('select[name="own_real_estate"]');
-      const section = document.getElementById('tenureSection');
-      if (!ownSel || !section) return;
-
-      const inputs = section.querySelectorAll(
-        'input[name="residence_tenure"], input[name="business_location_tenure"]'
-      );
-
-      function update() {
-        const show = ownSel.value === 'Yes';
-        if (show) {
-          section.style.display = 'grid';
-          inputs.forEach(i => i.disabled = false);
-        } else {
-          section.style.display = 'none';
-          inputs.forEach(i => { i.disabled = true; i.checked = false; });
-        }
-      }
-
-      ownSel.addEventListener('change', update);
-
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', update);
-      } else {
-        update();
-      }
-
-      window.addEventListener('pageshow', function (e) {
-        if (e.persisted) update();
-      });
-    })();
-
     // Toggle Second Owner section
     (function () {
       const sel = document.getElementById('has_owner_1');

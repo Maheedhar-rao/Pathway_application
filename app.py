@@ -369,8 +369,6 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
         ["Owns Real Estate", form_data.get("own_real_estate", "")],
         ["Own Home Location", form_data.get("own_home_location", "")],
         ["Own Business Location", form_data.get("own_business_location", "")],
-        ["Residence Tenure", form_data.get("residence_tenure", "N/A")],
-        ["Business Location Tenure", form_data.get("business_location_tenure", "N/A")],
     ]
     elements.append(_styled_section_table(prop_data))
 
@@ -703,11 +701,6 @@ def validate_fields(form: dict) -> dict:
         if not form.get(k):
             errors[k] = 'Required'
 
-    # Real estate conditional fields
-    if form.get('own_real_estate') == 'Yes':
-        for k in ['residence_tenure', 'business_location_tenure']:
-            if not form.get(k):
-                errors[k] = 'Required'
 
     # Second owner conditional required fields
     has_owner_1 = (form.get('has_owner_1') or 'No').strip()
