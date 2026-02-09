@@ -542,10 +542,16 @@ def _send_via_smtp(to_emails, subject, html_body, plain_text, pdf_buffer, submis
                                               filename=file_path.name)
                     msg.attach(file_attachment)
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.send_message(msg)
+    # Port 465 uses implicit SSL; port 587 uses STARTTLS
+    if SMTP_PORT == 465:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+            server.login(SMTP_USER, SMTP_PASS)
+            server.send_message(msg)
+    else:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.send_message(msg)
 
     log.info("SMTP email sent successfully to %s", ', '.join(to_emails))
     return True
