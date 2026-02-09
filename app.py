@@ -7,13 +7,17 @@ Each sales rep gets a unique link that tracks their submissions.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
+import json
 import logging
 import os
 import re
 import smtplib
+import threading
 import traceback
+import urllib.request
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
@@ -68,6 +72,9 @@ SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASS = os.environ.get("SMTP_PASS", "")
 EMAIL_FROM = os.environ.get("EMAIL_FROM", "tech@pathwaycatalyst.com")
 EMAIL_ENABLED = bool(SMTP_USER and SMTP_PASS)
+
+# Resend API (preferred on Railway where SMTP is blocked)
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 
 # Main team email - receives ALL submissions
 TEAM_EMAIL = os.environ.get("TEAM_EMAIL", "team@pathwaycatalyst.com")
@@ -352,8 +359,7 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
     # Render hand signature image
     sig_data = form_data.get("signature_data", "")
     if sig_data and sig_data.startswith("data:image/png;base64,"):
-        import base64 as _b64
-        raw = _b64.b64decode(sig_data.split(",", 1)[1])
+        raw = base64.b64decode(sig_data.split(",", 1)[1])
         sig_buf = BytesIO(raw)
         sig_img = Image(sig_buf, width=3.2*inch, height=1.2*inch)
         sig_img.hAlign = 'LEFT'
@@ -369,37 +375,14 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
     return buffer
 
 
-def send_email_with_pdf(
-    to_emails: List[str],
-    business_name: str,
-    pdf_buffer: BytesIO,
-    submission_id: int,
-    rep_name: str = None,
-    attached_files: List[Path] = None
-):
-    """Send email with PDF attachment and uploaded documents to specified recipients."""
-    if not EMAIL_ENABLED:
-        log.warning("EMAIL DISABLED – SMTP_USER or SMTP_PASS not set. Would send to %s", ', '.join(to_emails))
-        return False
+def _build_email_content(business_name, submission_id, rep_name, attached_files):
+    """Build shared email HTML, plain text, and subject."""
+    rep_line = f"Referred by: {rep_name}" if rep_name else "Direct submission (no rep)"
+    doc_count = len(attached_files) if attached_files else 0
+    submitted = datetime.now().strftime('%B %d, %Y at %I:%M %p')
+    subject = f"New Application: {business_name} (ID: {submission_id})"
 
-    if not to_emails:
-        log.warning("No recipients provided for email")
-        return False
-
-    log.info("Sending email to %s (SMTP %s:%s, user=%s)", ', '.join(to_emails), SMTP_HOST, SMTP_PORT, SMTP_USER)
-
-    try:
-        msg = MIMEMultipart('mixed')
-        msg['From'] = EMAIL_FROM
-        msg['To'] = ', '.join(to_emails)
-        msg['Subject'] = f"New Application: {business_name} (ID: {submission_id})"
-
-        # Email body
-        rep_line = f"Referred by: {rep_name}" if rep_name else "Direct submission (no rep)"
-        doc_count = len(attached_files) if attached_files else 0
-        submitted = datetime.now().strftime('%B %d, %Y at %I:%M %p')
-
-        html_body = f"""
+    html_body = f"""
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
@@ -474,42 +457,132 @@ def send_email_with_pdf(
   </table>
 </body>
 </html>
-        """
+    """
 
-        # Attach both HTML and plain-text fallback
-        alt_part = MIMEMultipart('alternative')
-        plain_text = f"Congratulations! New Application Received\n\nBusiness: {business_name}\nApplication ID: {submission_id}\nSubmitted: {submitted}\n{rep_line}\n\nAttachments: Application PDF + {doc_count} bank statement(s)\n\nPowered by CROC"
-        alt_part.attach(MIMEText(plain_text, 'plain'))
-        alt_part.attach(MIMEText(html_body, 'html'))
-        msg.attach(alt_part)
+    plain_text = (
+        f"New Application Received\n\nBusiness: {business_name}\n"
+        f"Application ID: {submission_id}\nSubmitted: {submitted}\n"
+        f"{rep_line}\n\nAttachments: Application PDF + {doc_count} bank statement(s)\n\n"
+        "Powered by CROC"
+    )
 
-        # Attach PDF summary
-        if pdf_buffer:
-            pdf_buffer.seek(0)
-            pdf_attachment = MIMEApplication(pdf_buffer.read(), _subtype='pdf')
-            pdf_attachment.add_header('Content-Disposition', 'attachment', filename=f'application_{submission_id}.pdf')
-            msg.attach(pdf_attachment)
+    return subject, html_body, plain_text
 
-        # Attach uploaded documents (bank statements, etc.)
-        if attached_files:
-            for file_path in attached_files:
-                if file_path.exists():
-                    with open(file_path, 'rb') as fp:
-                        file_attachment = MIMEApplication(fp.read(), _subtype='pdf')
-                        file_attachment.add_header(
-                            'Content-Disposition', 'attachment',
-                            filename=file_path.name
-                        )
-                        msg.attach(file_attachment)
 
-        # Send email
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASS)
-            server.send_message(msg)
+def _send_via_resend(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files):
+    """Send email using Resend REST API (works on Railway where SMTP is blocked)."""
+    log.info("Sending via Resend API to %s", ', '.join(to_emails))
 
-        log.info("Email sent successfully to %s", ', '.join(to_emails))
-        return True
+    attachments = []
+    if pdf_buffer:
+        pdf_buffer.seek(0)
+        attachments.append({
+            "filename": f"application_{submission_id}.pdf",
+            "content": base64.b64encode(pdf_buffer.read()).decode(),
+        })
+    if attached_files:
+        for fp in attached_files:
+            if fp.exists():
+                with open(fp, 'rb') as f:
+                    attachments.append({
+                        "filename": fp.name,
+                        "content": base64.b64encode(f.read()).decode(),
+                    })
+
+    payload = json.dumps({
+        "from": EMAIL_FROM,
+        "to": to_emails,
+        "subject": subject,
+        "html": html_body,
+        "text": plain_text,
+        "attachments": attachments,
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        result = json.loads(resp.read())
+        log.info("Resend API success: %s", result)
+    return True
+
+
+def _send_via_smtp(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files):
+    """Send email using SMTP (works locally, blocked on some cloud hosts)."""
+    log.info("Sending via SMTP to %s (%s:%s)", ', '.join(to_emails), SMTP_HOST, SMTP_PORT)
+
+    msg = MIMEMultipart('mixed')
+    msg['From'] = EMAIL_FROM
+    msg['To'] = ', '.join(to_emails)
+    msg['Subject'] = subject
+
+    alt_part = MIMEMultipart('alternative')
+    alt_part.attach(MIMEText(plain_text, 'plain'))
+    alt_part.attach(MIMEText(html_body, 'html'))
+    msg.attach(alt_part)
+
+    if pdf_buffer:
+        pdf_buffer.seek(0)
+        pdf_attachment = MIMEApplication(pdf_buffer.read(), _subtype='pdf')
+        pdf_attachment.add_header('Content-Disposition', 'attachment',
+                                  filename=f'application_{submission_id}.pdf')
+        msg.attach(pdf_attachment)
+
+    if attached_files:
+        for file_path in attached_files:
+            if file_path.exists():
+                with open(file_path, 'rb') as fp:
+                    file_attachment = MIMEApplication(fp.read(), _subtype='pdf')
+                    file_attachment.add_header('Content-Disposition', 'attachment',
+                                              filename=file_path.name)
+                    msg.attach(file_attachment)
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASS)
+        server.send_message(msg)
+
+    log.info("SMTP email sent successfully to %s", ', '.join(to_emails))
+    return True
+
+
+def send_email_with_pdf(
+    to_emails: List[str],
+    business_name: str,
+    pdf_buffer: BytesIO,
+    submission_id: int,
+    rep_name: str = None,
+    attached_files: List[Path] = None
+):
+    """Send email with PDF + attachments. Resend API first, SMTP fallback."""
+    if not RESEND_API_KEY and not EMAIL_ENABLED:
+        log.warning("EMAIL DISABLED – set RESEND_API_KEY or SMTP credentials. Would send to %s", ', '.join(to_emails))
+        return False
+
+    if not to_emails:
+        log.warning("No recipients provided for email")
+        return False
+
+    subject, html_body, plain_text = _build_email_content(
+        business_name, submission_id, rep_name, attached_files
+    )
+
+    try:
+        if RESEND_API_KEY:
+            return _send_via_resend(
+                to_emails, subject, html_body, plain_text,
+                pdf_buffer, submission_id, attached_files
+            )
+        else:
+            return _send_via_smtp(
+                to_emails, subject, html_body, plain_text,
+                pdf_buffer, submission_id, attached_files
+            )
     except Exception as e:
         log.error("Failed to send email to %s: %s\n%s", ', '.join(to_emails), e, traceback.format_exc())
         return False
@@ -715,7 +788,7 @@ def submit():
             "doc_type": "bank_statement",
         }).execute()
 
-    # Generate PDF and email to team + rep (if applicable)
+    # Generate PDF and email to team + rep (in background so user doesn't wait)
     if PDF_ENABLED:
         try:
             rep_name = rep_info["name"] if rep_info else None
@@ -723,24 +796,32 @@ def submit():
             pdf_buffer = generate_application_pdf(form, submission_id, rep_name)
 
             if pdf_buffer:
-                # Build recipient list: always include team, add rep if exists
                 recipients = [TEAM_EMAIL]
                 if rep_info and rep_info["email"]:
                     recipients.append(rep_info["email"])
 
-                log.info("Sending email with %d attachments to %s", len(saved_files), recipients)
-                send_email_with_pdf(
-                    to_emails=recipients,
-                    business_name=business_legal_name,
-                    pdf_buffer=pdf_buffer,
-                    submission_id=submission_id,
-                    rep_name=rep_name,
-                    attached_files=saved_files
-                )
+                # Send email in background thread — user gets instant redirect
+                def _bg_send(recips, biz, pdf_buf, sid, rname, files):
+                    try:
+                        send_email_with_pdf(
+                            to_emails=recips, business_name=biz,
+                            pdf_buffer=pdf_buf, submission_id=sid,
+                            rep_name=rname, attached_files=files,
+                        )
+                    except Exception as exc:
+                        log.error("Background email failed for %s: %s", sid, exc)
+
+                threading.Thread(
+                    target=_bg_send,
+                    args=(recipients, business_legal_name, pdf_buffer,
+                          submission_id, rep_name, saved_files),
+                    daemon=True,
+                ).start()
+                log.info("Email queued in background for submission %s → %s", submission_id, recipients)
             else:
                 log.warning("PDF generation returned None for submission %s", submission_id)
         except Exception as e:
-            log.error("Failed to generate/send PDF for submission %s: %s\n%s", submission_id, e, traceback.format_exc())
+            log.error("Failed to generate PDF for submission %s: %s\n%s", submission_id, e, traceback.format_exc())
     else:
         log.warning("PDF_ENABLED is False – reportlab not installed. Skipping PDF/email for submission %s", submission_id)
 
