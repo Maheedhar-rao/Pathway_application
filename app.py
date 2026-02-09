@@ -27,6 +27,19 @@ from pathlib import Path
 from typing import List, Optional
 from urllib.parse import quote
 
+import socket as _socket
+
+# Force IPv4 DNS resolution — Railway has no outbound IPv6, causing
+# [Errno 101] Network is unreachable when Python tries AAAA records first.
+_orig_getaddrinfo = _socket.getaddrinfo
+
+def _ipv4_only_getaddrinfo(*args, **kwargs):
+    results = _orig_getaddrinfo(*args, **kwargs)
+    ipv4 = [r for r in results if r[0] == _socket.AF_INET]
+    return ipv4 if ipv4 else results
+
+_socket.getaddrinfo = _ipv4_only_getaddrinfo
+
 from flask import (
     Flask, request, redirect, url_for, render_template, jsonify,
     send_from_directory, abort
@@ -544,11 +557,11 @@ def _send_via_smtp(to_emails, subject, html_body, plain_text, pdf_buffer, submis
 
     # Port 465 uses implicit SSL; port 587 uses STARTTLS
     if SMTP_PORT == 465:
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=15) as server:
             server.login(SMTP_USER, SMTP_PASS)
             server.send_message(msg)
     else:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
             server.starttls()
             server.login(SMTP_USER, SMTP_PASS)
             server.send_message(msg)
