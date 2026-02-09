@@ -570,6 +570,53 @@ def _send_via_smtp(to_emails, subject, html_body, plain_text, pdf_buffer, submis
     return True
 
 
+def _send_via_supabase_fn(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files):
+    """Send email via Supabase Edge Function (HTTP relay to bypass Railway SMTP block)."""
+    fn_url = f"{SUPABASE_URL}/functions/v1/send-email"
+    log.info("Sending via Supabase Edge Function to %s (%s)", ', '.join(to_emails), fn_url)
+
+    attachments = []
+    if pdf_buffer:
+        pdf_buffer.seek(0)
+        attachments.append({
+            "filename": f"application_{submission_id}.pdf",
+            "content": base64.b64encode(pdf_buffer.read()).decode(),
+        })
+    if attached_files:
+        for fp in attached_files:
+            if fp.exists():
+                with open(fp, 'rb') as f:
+                    attachments.append({
+                        "filename": fp.name,
+                        "content": base64.b64encode(f.read()).decode(),
+                    })
+
+    payload = json.dumps({
+        "from": EMAIL_FROM,
+        "to": to_emails,
+        "subject": subject,
+        "html": html_body,
+        "text": plain_text,
+        "attachments": attachments,
+    }).encode()
+
+    req = urllib.request.Request(
+        fn_url,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        result = json.loads(resp.read())
+        if result.get("success"):
+            log.info("Supabase Edge Function email sent: %s", result)
+        else:
+            raise RuntimeError(f"Edge Function error: {result.get('error', 'unknown')}")
+    return True
+
+
 def send_email_with_pdf(
     to_emails: List[str],
     business_name: str,
@@ -578,7 +625,7 @@ def send_email_with_pdf(
     rep_name: str = None,
     attached_files: List[Path] = None
 ):
-    """Send email with PDF + attachments. Resend API first, SMTP fallback."""
+    """Send email with PDF + attachments. Priority: Resend → Supabase Edge Fn → SMTP."""
     if not RESEND_API_KEY and not EMAIL_ENABLED:
         log.warning("EMAIL DISABLED – set RESEND_API_KEY or SMTP credentials. Would send to %s", ', '.join(to_emails))
         return False
@@ -597,13 +644,22 @@ def send_email_with_pdf(
                 to_emails, subject, html_body, plain_text,
                 pdf_buffer, submission_id, attached_files
             )
-        else:
-            return _send_via_smtp(
-                to_emails, subject, html_body, plain_text,
-                pdf_buffer, submission_id, attached_files
-            )
+        # Supabase Edge Function relay (works on Railway where SMTP is blocked)
+        return _send_via_supabase_fn(
+            to_emails, subject, html_body, plain_text,
+            pdf_buffer, submission_id, attached_files
+        )
     except Exception as e:
-        log.error("Failed to send email to %s: %s\n%s", ', '.join(to_emails), e, traceback.format_exc())
+        log.error("Primary email method failed: %s – falling back to SMTP", e)
+
+    # SMTP fallback (works locally / on hosts that allow outbound SMTP)
+    try:
+        return _send_via_smtp(
+            to_emails, subject, html_body, plain_text,
+            pdf_buffer, submission_id, attached_files
+        )
+    except Exception as e:
+        log.error("SMTP fallback also failed for %s: %s\n%s", ', '.join(to_emails), e, traceback.format_exc())
         return False
 
 
