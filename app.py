@@ -17,6 +17,7 @@ import re
 import smtplib
 import threading
 import traceback
+import urllib.parse
 import urllib.request
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -88,6 +89,9 @@ EMAIL_ENABLED = bool(SMTP_USER and SMTP_PASS)
 # Resend API (preferred on Railway where SMTP is blocked)
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 
+# SAM.gov Entity API (free, for business verification)
+SAM_GOV_API_KEY = os.environ.get("SAM_GOV_API_KEY", "")
+
 # Main team email - receives ALL submissions
 TEAM_EMAIL = os.environ.get("TEAM_EMAIL", "team@pathwaycatalyst.com")
 
@@ -100,7 +104,8 @@ SALES_REPS = {
     "troy": {"name": "Troy", "email": "troy@pathwaycatalyst.com"},
     "adrian": {"name": "Adrian", "email": "adrian@pathwaycatalyst.com"},
     "frank": {"name": "Frank", "email": "frank@pathwaycatalyst.com"},
-    "andres": {"name": "Andres", "email": "andres@pathwaycatalyst.com"}
+    "andres": {"name": "Andres", "email": "andres@pathwaycatalyst.com"},
+    "ethan": {"name": "Ethan", "email": "ethan@pathwaycatalyst.com"}
 }
 
 def get_rep_info(rep_code: str) -> Optional[dict]:
@@ -685,6 +690,105 @@ def send_email_with_pdf(
         return False
 
 
+# ---- Business Lookup (SAM.gov) -----------------------------------------------
+
+def lookup_business_sam_gov(business_name: str, state_code: str, ein: str = "") -> dict:
+    """
+    Query SAM.gov Entity Management API for business registration data.
+    Free tier: 10 requests/day for non-federal accounts.
+    Never raises -- all exceptions caught and returned as error status.
+    """
+    result = {
+        "lookup_source": "sam.gov",
+        "lookup_timestamp": datetime.utcnow().isoformat() + "Z",
+        "lookup_status": "error",
+        "lookup_error": None,
+    }
+
+    if not SAM_GOV_API_KEY:
+        result["lookup_status"] = "skipped"
+        result["lookup_error"] = "No SAM.gov API key configured"
+        return result
+
+    if not business_name:
+        result["lookup_status"] = "skipped"
+        result["lookup_error"] = "Missing business name"
+        return result
+
+    try:
+        params = {
+            "api_key": SAM_GOV_API_KEY,
+            "legalBusinessName": business_name.strip(),
+            "registrationStatus": "A",
+        }
+        if state_code and len(state_code.strip()) == 2:
+            params["physicalAddressStateCode"] = state_code.strip().upper()
+
+        url = "https://api.sam.gov/entity-information/v3/entities?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+
+        total = data.get("totalRecords", 0)
+        entities = data.get("entityData", [])
+
+        if not entities or total == 0:
+            result["lookup_status"] = "not_found"
+            result["sam_total_results"] = 0
+            return result
+
+        # Use the first (best) match
+        entity = entities[0]
+        reg = entity.get("entityRegistration", {})
+        core = entity.get("coreData", {})
+        phys_addr = core.get("physicalAddress", {})
+        gen_info = core.get("generalInformation", {})
+        biz_types = core.get("businessTypes", {})
+
+        result["lookup_status"] = "found"
+        result["sam_total_results"] = total
+        result["sam_uei"] = reg.get("ueiSAM")
+        result["sam_cage_code"] = reg.get("cageCode")
+        result["sam_legal_name"] = reg.get("legalBusinessName")
+        result["sam_dba_name"] = reg.get("dbaName")
+        result["sam_registration_status"] = reg.get("registrationStatus")
+        result["sam_expiration_date"] = reg.get("registrationExpirationDate")
+        result["sam_entity_structure"] = gen_info.get("entityStructureDesc")
+        result["sam_entity_type"] = gen_info.get("entityTypeDesc")
+        result["sam_state_of_incorporation"] = gen_info.get("stateOfIncorporationCode")
+        result["sam_country_of_incorporation"] = gen_info.get("countryOfIncorporationCode")
+        result["sam_business_start_date"] = gen_info.get("companyEstablishedDate") or gen_info.get("fiscalYearEndCloseDate")
+        result["sam_organization_structure"] = gen_info.get("organizationStructureDesc")
+        result["sam_naics_codes"] = [
+            n.get("naicsCode") for n in (gen_info.get("naicsList") or []) if n.get("naicsCode")
+        ]
+        result["sam_business_type_list"] = [
+            bt.get("businessTypeDesc") for bt in (biz_types.get("businessTypeList") or []) if bt.get("businessTypeDesc")
+        ]
+        result["sam_physical_address"] = ", ".join(filter(None, [
+            phys_addr.get("addressLine1"),
+            phys_addr.get("addressLine2"),
+            phys_addr.get("city"),
+            phys_addr.get("stateOrProvinceCode"),
+            phys_addr.get("zipCode"),
+        ]))
+        result["sam_sam_gov_url"] = f"https://sam.gov/entity/{reg.get('ueiSAM', '')}/coreData" if reg.get("ueiSAM") else None
+
+        return result
+
+    except urllib.error.HTTPError as e:
+        result["lookup_error"] = f"HTTP {e.code}: {e.reason}"
+        log.warning("SAM.gov lookup HTTP error for '%s': %s", business_name, result["lookup_error"])
+    except urllib.error.URLError as e:
+        result["lookup_error"] = f"URL error: {e.reason}"
+        log.warning("SAM.gov lookup URL error for '%s': %s", business_name, result["lookup_error"])
+    except Exception as e:
+        result["lookup_error"] = str(e)[:200]
+        log.warning("SAM.gov lookup failed for '%s': %s", business_name, e)
+
+    return result
+
+
 def validate_fields(form: dict) -> dict:
     errors = {}
 
@@ -834,6 +938,17 @@ def submit():
         last1 = (form.get("owner_1_last") or "").strip()
         if first1 or last1:
             owners.append((first1 + " " + last1).strip())
+
+    # Business lookup via SAM.gov (enrichment - never blocks submission)
+    business_lookup = lookup_business_sam_gov(
+        business_name=business_legal_name,
+        state_code=form.get("company_state", ""),
+        ein=form.get("ein", ""),
+    )
+    form["business_lookup"] = business_lookup
+    log.info("SAM.gov lookup for '%s' (state=%s): status=%s",
+             business_legal_name, form.get("company_state", ""),
+             business_lookup.get("lookup_status"))
 
     # Insert into Supabase
     db_payload = {

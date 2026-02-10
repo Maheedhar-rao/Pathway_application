@@ -217,6 +217,34 @@
         <div><strong>Owner Phone</strong></div><div>${p.owner_0_mobile || ''}</div>
       </div>
 
+      ${(() => {
+        const lk = p.business_lookup || {};
+        if (lk.lookup_status === 'found') return `
+          <h4 style="margin-top:16px">SAM.gov Business Verification</h4>
+          <div class="kv">
+            <div><strong>Registered Name</strong></div><div>${lk.sam_legal_name || 'N/A'}</div>
+            <div><strong>DBA Name</strong></div><div>${lk.sam_dba_name || 'N/A'}</div>
+            <div><strong>UEI</strong></div><div>${lk.sam_uei || 'N/A'}</div>
+            <div><strong>CAGE Code</strong></div><div>${lk.sam_cage_code || 'N/A'}</div>
+            <div><strong>Status</strong></div><div>${lk.sam_registration_status === 'A' ? 'Active' : lk.sam_registration_status || 'N/A'}</div>
+            <div><strong>Entity Structure</strong></div><div>${lk.sam_entity_structure || 'N/A'}</div>
+            <div><strong>Entity Type</strong></div><div>${lk.sam_entity_type || 'N/A'}</div>
+            <div><strong>State of Incorporation</strong></div><div>${lk.sam_state_of_incorporation || 'N/A'}</div>
+            <div><strong>Start Date</strong></div><div>${lk.sam_business_start_date || 'N/A'}</div>
+            <div><strong>NAICS Codes</strong></div><div>${(lk.sam_naics_codes || []).join(', ') || 'N/A'}</div>
+            <div><strong>Business Types</strong></div><div>${(lk.sam_business_type_list || []).join(', ') || 'N/A'}</div>
+            <div><strong>Physical Address</strong></div><div>${lk.sam_physical_address || 'N/A'}</div>
+            <div><strong>SAM.gov</strong></div><div>${lk.sam_sam_gov_url ? '<a href="' + lk.sam_sam_gov_url + '" target="_blank">View Record</a>' : 'N/A'}</div>
+          </div>`;
+        if (lk.lookup_status === 'not_found') return `
+          <h4 style="margin-top:16px">SAM.gov Business Verification</h4>
+          <p class="lead">No matching entity found in SAM.gov.</p>`;
+        if (lk.lookup_status === 'error') return `
+          <h4 style="margin-top:16px">SAM.gov Business Verification</h4>
+          <p class="lead" style="color:#f87171">Lookup failed: ${lk.lookup_error || 'Unknown error'}</p>`;
+        return '';
+      })()}
+
       <h4 style="margin-top:16px">Bank Statements</h4>
       <div class="pdf-grid">
         ${(data.files || []).filter(f => f.doc_type === 'bank_statement').map(f => `
