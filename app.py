@@ -105,7 +105,8 @@ SALES_REPS = {
     "adrian": {"name": "Adrian", "email": "adrian@pathwaycatalyst.com"},
     "frank": {"name": "Frank", "email": "frank@pathwaycatalyst.com"},
     "andres": {"name": "Andres", "email": "andres@pathwaycatalyst.com"},
-    "ethan": {"name": "Ethan", "email": "ethan@pathwaycatalyst.com"}
+    "ethan": {"name": "Ethan", "email": "ethan@pathwaycatalyst.com"},
+    "juliette":{"name": "Juliette", "email": "juliette@pathwaycatalyst.com"}
 }
 
 def get_rep_info(rep_code: str) -> Optional[dict]:
