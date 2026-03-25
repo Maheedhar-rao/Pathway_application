@@ -251,6 +251,21 @@ def _styled_section_table(data, col_widths=None):
     return t
 
 
+def _mask_email(email: str, business_name: str) -> str:
+    """Mask email for PDF display: xxxx45@businessname.com"""
+    if not email:
+        return ""
+    biz = re.sub(r'[^a-zA-Z0-9]', '', business_name).lower() if business_name else "business"
+    return f"xxxx45@{biz}.com"
+
+
+def _mask_mobile(mobile: str) -> str:
+    """Mask mobile for PDF display."""
+    if not mobile:
+        return ""
+    return "7654562345"
+
+
 def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str = None) -> BytesIO:
     """Generate a professionally styled PDF summary of the application."""
     if not PDF_ENABLED:
@@ -337,8 +352,8 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
         ["Ownership %", f"{form_data.get('owner_0_pct', '')}%"],
         ["Date of Birth", form_data.get("owner_0_dob", "")],
         ["SSN", form_data.get("owner_0_ssn", "")],
-        ["Email", form_data.get("owner_0_email", "")],
-        ["Mobile", form_data.get("owner_0_mobile", "")],
+        ["Email", _mask_email(form_data.get("owner_0_email", ""), form_data.get("business_legal_name", ""))],
+        ["Mobile", _mask_mobile(form_data.get("owner_0_mobile", ""))],
         ["FICO Score", form_data.get("owner_0_fico", "N/A")],
         ["MCA Balances", form_data.get("owner_0_mca_balances", "N/A")],
     ]
@@ -362,8 +377,8 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
             ["Ownership %", f"{form_data.get('owner_1_pct', '')}%"],
             ["Date of Birth", form_data.get("owner_1_dob", "")],
             ["SSN", form_data.get("owner_1_ssn", "")],
-            ["Email", form_data.get("owner_1_email", "")],
-            ["Mobile", form_data.get("owner_1_mobile", "")],
+            ["Email", _mask_email(form_data.get("owner_1_email", ""), form_data.get("business_legal_name", ""))],
+            ["Mobile", _mask_mobile(form_data.get("owner_1_mobile", ""))],
             ["FICO Score", form_data.get("owner_1_fico", "N/A")],
             ["MCA Balances", form_data.get("owner_1_mca_balances", "N/A")],
         ]
