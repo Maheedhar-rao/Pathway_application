@@ -541,9 +541,15 @@
 
         <div class="card" style="margin: 12px 0; padding: 14px;">
           <p style="margin:0; font-size:.95rem; line-height:1.45;">
-            By submitting this application, you authorize Pathway Catalyst and its partners to contact you and obtain
-            information necessary to evaluate financing options. You also acknowledge and agree to electronic records
-            and signatures as permitted under applicable law.
+            By submitting this application, you authorize the lender and its partners to contact you at the telephone,
+            cell phone, email, or direct mail contact data provided in this form for purposes of fulfilling this inquiry
+            about business financing, even if you have previously indicated a preference of "do not call" or "do not email"
+            with a government registry. You also authorize the lender and its representatives, successors, assigns, and
+            designees to obtain consumer and/or personal, business and investigative reports and other information about you
+            from consumer reporting agencies and other third parties. You consent to the release of any information relating
+            to you to the lender on its behalf. By providing your cell phone number, you consent to the receipt of text
+            messages knowing that message and data rates may apply. Reply STOP to unsubscribe, HELP for help. Message
+            frequency varies. You certify that all the information contained herein is complete, true, and accurate.
           </p>
 
           <label class="inline" style="align-items:flex-start; gap:10px; margin-top:12px;">
@@ -553,6 +559,18 @@
                    required
                    {% if form and form.get('esign_consent')=='Yes' %}checked{% endif %} />
             <span>I agree and provide my electronic signature.</span>
+          </label>
+
+          <label class="inline" style="align-items:flex-start; gap:10px; margin-top:10px;">
+            <input type="checkbox"
+                   name="esign_act_consent"
+                   value="Yes"
+                   required
+                   {% if form and form.get('esign_act_consent')=='Yes' %}checked{% endif %} />
+            <span>I agree to the terms and conditions — I agree that the electronic digitized signature I apply on
+            this document is a representation of my signature and is legally valid and binding as if I had signed the
+            document with ink on paper in accordance with the Uniform Electronic Transactions Act (UETA) and the
+            Electronic Signatures in Global and National Commerce Act (E-SIGN) of 2000.</span>
           </label>
         </div>
 

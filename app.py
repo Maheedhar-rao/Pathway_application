@@ -814,7 +814,7 @@ def validate_fields(form: dict) -> dict:
         'company_address1','company_city','company_state','company_zip',
         'owner_0_first','owner_0_last','owner_0_pct','owner_0_dob','owner_0_ssn','owner_0_email','owner_0_mobile',
         'own_real_estate','own_home_location','own_business_location',
-        'esign_consent',
+        'esign_consent','esign_act_consent',
         'signature_data','signature_date','signature_print_name',
     ]
     for k in req:
@@ -872,6 +872,8 @@ def validate_fields(form: dict) -> dict:
     # E-sign consent must be explicitly "Yes"
     if form.get('esign_consent') and form.get('esign_consent') != 'Yes':
         errors['esign_consent'] = 'Consent is required'
+    if form.get('esign_act_consent') and form.get('esign_act_consent') != 'Yes':
+        errors['esign_act_consent'] = 'Consent is required'
 
     return errors
 
