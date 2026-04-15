@@ -130,15 +130,23 @@
 
     <div class="card upload-card">
       <div class="card-header">
-        <h2>Upload Additional Documents</h2>
+        <h2>Upload Supporting Documents</h2>
         <span class="pill">Optional</span>
       </div>
       <div class="card-body">
         <p style="margin: 0 0 20px; color: var(--muted); font-size: 14px;">
-          Speed up your approval by uploading these documents now.
+          Speed up your approval by attaching your bank statements, voided check, and owner ID.
+          Click <strong>Complete Submission</strong> below to finalize your application.
         </p>
         <form action="{{ url_for('upload_docs') }}" method="POST" enctype="multipart/form-data">
           <input type="hidden" name="sid" value="{{ sid or '' }}"/>
+          <div class="field" style="margin-bottom: 16px;">
+            <label>Bank Statements</label>
+            <div class="uploader" style="padding: 16px;">
+              <p style="margin: 0 0 8px; font-size: 13px; color: var(--muted);">Upload PDFs (optional, you can select multiple)</p>
+              <input type="file" name="bank_files" accept="application/pdf" multiple />
+            </div>
+          </div>
           <div class="grid cols-2">
             <div class="field">
               <label>Voided Check</label>

@@ -12,7 +12,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { to, from, subject, html, text, attachments } = await req.json();
+    const { to, from, subject, html, text, attachments, messageId, inReplyTo, references } = await req.json();
 
     if (!to || !subject) {
       return new Response(
@@ -46,14 +46,19 @@ Deno.serve(async (req) => {
 
     const recipients = Array.isArray(to) ? to.join(", ") : to;
 
-    const info = await transporter.sendMail({
+    const mailOptions: Record<string, unknown> = {
       from: from || smtpUser,
       to: recipients,
       subject,
       text: text || "",
       html: html || "",
       attachments: mailAttachments,
-    });
+    };
+    if (messageId) mailOptions.messageId = messageId;
+    if (inReplyTo) mailOptions.inReplyTo = inReplyTo;
+    if (references) mailOptions.references = references;
+
+    const info = await transporter.sendMail(mailOptions);
 
     console.log("Email sent:", info.messageId, "to:", recipients);
 
