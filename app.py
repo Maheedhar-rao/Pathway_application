@@ -57,7 +57,7 @@ try:
         SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
         Image, HRFlowable, BaseDocTemplate, Frame, PageTemplate
     )
-    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_JUSTIFY
     PDF_ENABLED = True
 except ImportError:
     PDF_ENABLED = False
@@ -395,10 +395,32 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
 
     # ── Signature & Authorization ──
     elements.append(Paragraph("Authorization &amp; Signature", section_style))
+    auth_style = ParagraphStyle(
+        'AuthText', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY,
+        spaceAfter=8, alignment=TA_JUSTIFY, leading=12,
+    )
     elements.append(Paragraph(
-        "The applicant has agreed to electronic records and signatures as permitted under applicable law.",
-        ParagraphStyle('AuthText', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY, spaceAfter=10)
+        "By submitting this application, the applicant authorizes the lender and its partners to contact the "
+        "applicant at the telephone, cell phone, email, or direct mail contact data provided in this form for "
+        "purposes of fulfilling this inquiry about business financing, even if the applicant has previously "
+        "indicated a preference of \"do not call\" or \"do not email\" with a government registry. The applicant "
+        "also authorizes the lender and its representatives, successors, assigns, and designees to obtain consumer "
+        "and/or personal, business and investigative reports and other information about the applicant from "
+        "consumer reporting agencies and other third parties. The applicant consents to the release of any "
+        "information relating to the applicant to the lender on its behalf. By providing a cell phone number, "
+        "the applicant consents to the receipt of text messages knowing that message and data rates may apply. "
+        "Reply STOP to unsubscribe, HELP for help. Message frequency varies. The applicant certifies that all "
+        "the information contained herein is complete, true, and accurate.",
+        auth_style
     ))
+    elements.append(Paragraph(
+        "<b>E-SIGN Act / UETA Consent:</b> The applicant agrees that the electronic digitized signature applied "
+        "on this document is a representation of the applicant's signature and is legally valid and binding as "
+        "if the applicant had signed the document with ink on paper in accordance with the Uniform Electronic "
+        "Transactions Act (UETA) and the Electronic Signatures in Global and National Commerce Act (E-SIGN) of 2000.",
+        auth_style
+    ))
+    elements.append(Spacer(1, 6))
 
     sig_info = [
         ["Print Name", form_data.get("signature_print_name", "")],
@@ -425,12 +447,28 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
     return buffer
 
 
-def _build_email_content(business_name, submission_id, rep_name, attached_files):
+def _build_email_content(business_name, submission_id, rep_name, attached_files, email_type="new_application"):
     """Build shared email HTML, plain text, and subject."""
     rep_line = f"Referred by: {rep_name}" if rep_name else "Direct submission (no rep)"
     doc_count = len(attached_files) if attached_files else 0
     submitted = datetime.now().strftime('%B %d, %Y at %I:%M %p')
-    subject = f"New Application: {business_name} (ID: {submission_id})"
+    base_subject = f"New Application: {business_name} (ID: {submission_id})"
+    if email_type == "docs_update":
+        subject = f"Re: {base_subject}"
+        alert_text = "Additional Documents Uploaded"
+        attachments_text = f"{doc_count} supporting document(s)"
+        body_note = (
+            "The applicant has uploaded additional supporting documents for this application. "
+            "Please find them attached to this email."
+        )
+    else:
+        subject = base_subject
+        alert_text = "New Loan Application Received"
+        attachments_text = "Application PDF"
+        body_note = (
+            "Please find the complete application summary attached to this email. "
+            "You can also view full details in the admin dashboard."
+        )
 
     html_body = f"""
 <!DOCTYPE html>
@@ -457,7 +495,7 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files)
             <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f7ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:24px;">
               <tr>
                 <td style="padding:14px 18px;">
-                  <p style="margin:0;font-size:15px;font-weight:600;color:#1e40af;">New Loan Application Received</p>
+                  <p style="margin:0;font-size:15px;font-weight:600;color:#1e40af;">{alert_text}</p>
                 </td>
               </tr>
             </table>
@@ -482,13 +520,12 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files)
               </tr>
               <tr>
                 <td style="padding:8px 0;color:#64748b;font-size:13px;">Attachments</td>
-                <td style="padding:8px 0;color:#1e293b;font-size:14px;">Application PDF + {doc_count} bank statement(s)</td>
+                <td style="padding:8px 0;color:#1e293b;font-size:14px;">{attachments_text}</td>
               </tr>
             </table>
 
             <p style="color:#475569;font-size:14px;line-height:1.6;margin:0 0 20px;">
-              Please find the complete application summary and uploaded bank statements attached to this email.
-              You can also view full details in the admin dashboard.
+              {body_note}
             </p>
 
           </td>
@@ -510,16 +547,17 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files)
     """
 
     plain_text = (
-        f"New Application Received\n\nBusiness: {business_name}\n"
+        f"{alert_text}\n\nBusiness: {business_name}\n"
         f"Application ID: {submission_id}\nSubmitted: {submitted}\n"
-        f"{rep_line}\n\nAttachments: Application PDF + {doc_count} bank statement(s)\n\n"
+        f"{rep_line}\n\nAttachments: {attachments_text}\n\n"
         "Powered by CROC"
     )
 
     return subject, html_body, plain_text
 
 
-def _send_via_resend(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files):
+def _send_via_resend(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files,
+                     message_id=None, in_reply_to=None):
     """Send email using Resend REST API (works on Railway where SMTP is blocked)."""
     log.info("Sending via Resend API to %s", ', '.join(to_emails))
 
@@ -541,14 +579,23 @@ def _send_via_resend(to_emails, subject, html_body, plain_text, pdf_buffer, subm
             except Exception as e:
                 log.error("Failed to download attachment %s: %s", bp, e)
 
-    payload = json.dumps({
+    body = {
         "from": EMAIL_FROM,
         "to": to_emails,
         "subject": subject,
         "html": html_body,
         "text": plain_text,
         "attachments": attachments,
-    }).encode()
+    }
+    headers_extra = {}
+    if message_id:
+        headers_extra["Message-ID"] = message_id
+    if in_reply_to:
+        headers_extra["In-Reply-To"] = in_reply_to
+        headers_extra["References"] = in_reply_to
+    if headers_extra:
+        body["headers"] = headers_extra
+    payload = json.dumps(body).encode()
 
     req = urllib.request.Request(
         "https://api.resend.com/emails",
@@ -564,7 +611,8 @@ def _send_via_resend(to_emails, subject, html_body, plain_text, pdf_buffer, subm
     return True
 
 
-def _send_via_smtp(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files):
+def _send_via_smtp(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files,
+                   message_id=None, in_reply_to=None):
     """Send email using SMTP (works locally, blocked on some cloud hosts)."""
     log.info("Sending via SMTP to %s (%s:%s)", ', '.join(to_emails), SMTP_HOST, SMTP_PORT)
 
@@ -572,6 +620,11 @@ def _send_via_smtp(to_emails, subject, html_body, plain_text, pdf_buffer, submis
     msg['From'] = EMAIL_FROM
     msg['To'] = ', '.join(to_emails)
     msg['Subject'] = subject
+    if message_id:
+        msg['Message-ID'] = message_id
+    if in_reply_to:
+        msg['In-Reply-To'] = in_reply_to
+        msg['References'] = in_reply_to
 
     alt_part = MIMEMultipart('alternative')
     alt_part.attach(MIMEText(plain_text, 'plain'))
@@ -611,7 +664,8 @@ def _send_via_smtp(to_emails, subject, html_body, plain_text, pdf_buffer, submis
     return True
 
 
-def _send_via_supabase_fn(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files):
+def _send_via_supabase_fn(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files,
+                          message_id=None, in_reply_to=None):
     """Send email via Supabase Edge Function (HTTP relay to bypass Railway SMTP block)."""
     fn_url = f"{SUPABASE_URL}/functions/v1/send-email"
     log.info("Sending via Supabase Edge Function to %s (%s)", ', '.join(to_emails), fn_url)
@@ -634,14 +688,20 @@ def _send_via_supabase_fn(to_emails, subject, html_body, plain_text, pdf_buffer,
             except Exception as e:
                 log.error("Failed to download attachment %s: %s", bp, e)
 
-    payload = json.dumps({
+    body = {
         "from": EMAIL_FROM,
         "to": to_emails,
         "subject": subject,
         "html": html_body,
         "text": plain_text,
         "attachments": attachments,
-    }).encode()
+    }
+    if message_id:
+        body["messageId"] = message_id
+    if in_reply_to:
+        body["inReplyTo"] = in_reply_to
+        body["references"] = in_reply_to
+    payload = json.dumps(body).encode()
 
     req = urllib.request.Request(
         fn_url,
@@ -660,13 +720,19 @@ def _send_via_supabase_fn(to_emails, subject, html_body, plain_text, pdf_buffer,
     return True
 
 
+def _application_message_id(submission_id: int) -> str:
+    """Deterministic Message-ID used to thread all emails for an application."""
+    return f"<application-{submission_id}@pathwaycatalyst.app>"
+
+
 def send_email_with_pdf(
     to_emails: List[str],
     business_name: str,
     pdf_buffer: BytesIO,
     submission_id: int,
     rep_name: str = None,
-    attached_files: List[str] = None
+    attached_files: List[str] = None,
+    email_type: str = "new_application",
 ):
     """Send email with PDF + attachments. Priority: Resend → Supabase Edge Fn → SMTP."""
     if not RESEND_API_KEY and not EMAIL_ENABLED:
@@ -678,19 +744,27 @@ def send_email_with_pdf(
         return False
 
     subject, html_body, plain_text = _build_email_content(
-        business_name, submission_id, rep_name, attached_files
+        business_name, submission_id, rep_name, attached_files, email_type=email_type
     )
+
+    thread_id = _application_message_id(submission_id)
+    if email_type == "new_application":
+        message_id, in_reply_to = thread_id, None
+    else:
+        message_id, in_reply_to = None, thread_id
 
     try:
         if RESEND_API_KEY:
             return _send_via_resend(
                 to_emails, subject, html_body, plain_text,
-                pdf_buffer, submission_id, attached_files
+                pdf_buffer, submission_id, attached_files,
+                message_id=message_id, in_reply_to=in_reply_to,
             )
         # Supabase Edge Function relay (works on Railway where SMTP is blocked)
         return _send_via_supabase_fn(
             to_emails, subject, html_body, plain_text,
-            pdf_buffer, submission_id, attached_files
+            pdf_buffer, submission_id, attached_files,
+            message_id=message_id, in_reply_to=in_reply_to,
         )
     except Exception as e:
         log.error("Primary email method failed: %s – falling back to SMTP", e)
@@ -699,7 +773,8 @@ def send_email_with_pdf(
     try:
         return _send_via_smtp(
             to_emails, subject, html_body, plain_text,
-            pdf_buffer, submission_id, attached_files
+            pdf_buffer, submission_id, attached_files,
+            message_id=message_id, in_reply_to=in_reply_to,
         )
     except Exception as e:
         log.error("SMTP fallback also failed for %s: %s\n%s", ', '.join(to_emails), e, traceback.format_exc())
@@ -926,12 +1001,6 @@ def submit():
 
     errors = validate_fields(form)
 
-    # Validate bank statement upload (required)
-    bank_files = request.files.getlist("bank_files")
-    has_bank_file = any(f and f.filename for f in bank_files)
-    if not has_bank_file:
-        errors['bank_files'] = 'At least one bank statement is required'
-
     if errors:
         rep_sig = sign_rep_code(rep_code) if rep_code else ""
         return render_template("form.html", errors=errors, form=form, rep_code=rep_code, rep_info=rep_info, rep_sig=rep_sig), 400
@@ -990,24 +1059,7 @@ def submit():
         abort(500, description="Insert failed")
     submission_id = ins.data[0]["id"]
 
-    # Upload bank statements to Supabase Storage + metadata to DB
     saved_paths: List[str] = []
-    for f in request.files.getlist("bank_files"):
-        if not f or not f.filename:
-            continue
-        safe = f.filename.replace("/", "_").replace("\\", "_")
-        bucket_path = f"{submission_id}/bank_statement/{safe}"
-        file_bytes = f.read()
-        content_type = f.content_type or "application/pdf"
-        size = _upload_to_storage(file_bytes, bucket_path, content_type)
-        saved_paths.append(bucket_path)
-        sb.table("application_files").insert({
-            "application_id": submission_id,
-            "filename": safe,
-            "storage_path": bucket_path,
-            "size_bytes": size,
-            "doc_type": "bank_statement",
-        }).execute()
 
     # Generate PDF and email to team + rep (in background so user doesn't wait)
     if PDF_ENABLED:
@@ -1053,7 +1105,31 @@ def upload_docs():
     sid = request.form.get("sid", type=int)
     if not sid:
         abort(400)
+
     saved = []
+    attached_paths: List[str] = []
+
+    # Bank statements (multiple)
+    for f in request.files.getlist("bank_files"):
+        if not f or not f.filename:
+            continue
+        safe = f.filename.replace("/", "_").replace("\\", "_")
+        bucket_path = f"{sid}/bank_statement/{safe}"
+        file_bytes = f.read()
+        content_type = f.content_type or "application/pdf"
+        size = _upload_to_storage(file_bytes, bucket_path, content_type)
+        sb.table("application_files").insert({
+            "application_id": sid,
+            "filename": safe,
+            "storage_path": bucket_path,
+            "size_bytes": size,
+            "doc_type": "bank_statement",
+        }).execute()
+        attached_paths.append(bucket_path)
+        if "bank_statement" not in saved:
+            saved.append("bank_statement")
+
+    # Voided check + ID (single files)
     for field, dtype in [("voided_check", "voided_check"), ("id_doc", "id_doc")]:
         f = request.files.get(field)
         if f and f.filename:
@@ -1069,7 +1145,44 @@ def upload_docs():
                 "size_bytes": size,
                 "doc_type": dtype,
             }).execute()
+            attached_paths.append(bucket_path)
             saved.append(dtype)
+
+    # Email uploaded documents to team + rep (in background)
+    if attached_paths:
+        try:
+            app_res = sb.table("applications").select(
+                "business_legal_name, rep_name, rep_email"
+            ).eq("id", sid).execute()
+            row = (app_res.data or [{}])[0]
+            business_name = row.get("business_legal_name") or ""
+            rep_name = row.get("rep_name")
+            rep_email = row.get("rep_email")
+
+            recipients = [TEAM_EMAIL]
+            if rep_email:
+                recipients.append(rep_email)
+
+            def _bg_send_docs(recips, biz, sid_, rname, files):
+                try:
+                    send_email_with_pdf(
+                        to_emails=recips, business_name=biz,
+                        pdf_buffer=None, submission_id=sid_,
+                        rep_name=rname, attached_files=files,
+                        email_type="docs_update",
+                    )
+                except Exception as exc:
+                    log.error("Background docs email failed for %s: %s", sid_, exc)
+
+            threading.Thread(
+                target=_bg_send_docs,
+                args=(recipients, business_name, sid, rep_name, attached_paths),
+                daemon=True,
+            ).start()
+            log.info("Docs email queued for submission %s → %s", sid, recipients)
+        except Exception as e:
+            log.error("Failed to queue docs email for %s: %s", sid, e)
+
     return render_template("thank_you.html", sid=sid, uploaded=saved)
 
 # -------------------- JSON APIs for Dashboard --------------------
