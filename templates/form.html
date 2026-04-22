@@ -1,3 +1,24 @@
+{% macro state_select(name, selected, required=False) -%}
+  {% set us_states = [
+    ('AL','Alabama'),('AK','Alaska'),('AZ','Arizona'),('AR','Arkansas'),('CA','California'),
+    ('CO','Colorado'),('CT','Connecticut'),('DE','Delaware'),('DC','District of Columbia'),
+    ('FL','Florida'),('GA','Georgia'),('HI','Hawaii'),('ID','Idaho'),('IL','Illinois'),
+    ('IN','Indiana'),('IA','Iowa'),('KS','Kansas'),('KY','Kentucky'),('LA','Louisiana'),
+    ('ME','Maine'),('MD','Maryland'),('MA','Massachusetts'),('MI','Michigan'),('MN','Minnesota'),
+    ('MS','Mississippi'),('MO','Missouri'),('MT','Montana'),('NE','Nebraska'),('NV','Nevada'),
+    ('NH','New Hampshire'),('NJ','New Jersey'),('NM','New Mexico'),('NY','New York'),
+    ('NC','North Carolina'),('ND','North Dakota'),('OH','Ohio'),('OK','Oklahoma'),('OR','Oregon'),
+    ('PA','Pennsylvania'),('RI','Rhode Island'),('SC','South Carolina'),('SD','South Dakota'),
+    ('TN','Tennessee'),('TX','Texas'),('UT','Utah'),('VT','Vermont'),('VA','Virginia'),
+    ('WA','Washington'),('WV','West Virginia'),('WI','Wisconsin'),('WY','Wyoming')
+  ] %}
+  <select name="{{ name }}" autocomplete="address-level1" {% if required %}required{% endif %}>
+    <option value="">Select state</option>
+    {% for code, label in us_states %}
+      <option value="{{ code }}" {% if selected == code %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+{%- endmacro %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -191,10 +212,7 @@
           </div>
           <div class="field">
             <label>State</label>
-            <input name="company_state"
-                   autocomplete="address-level1"
-                   value="{{ (form.get('company_state') if form else '') }}"
-                   required />
+            {{ state_select('company_state', form.get('company_state') if form else '', required=True) }}
           </div>
           <div class="field">
             <label>ZIP</label>
@@ -319,10 +337,7 @@
             </div>
             <div class="field">
               <label>State</label>
-              <input name="owner_0_state"
-                     autocomplete="address-level1"
-                     value="{{ (form.get('owner_0_state') if form else '') }}"
-                     required />
+              {{ state_select('owner_0_state', form.get('owner_0_state') if form else '', required=True) }}
             </div>
             <div class="field">
               <label>ZIP</label>
@@ -452,9 +467,7 @@
               </div>
               <div class="field">
                 <label>State</label>
-                <input name="owner_1_state"
-                       autocomplete="address-level1"
-                       value="{{ (form.get('owner_1_state') if form else '') }}" />
+                {{ state_select('owner_1_state', form.get('owner_1_state') if form else '') }}
               </div>
               <div class="field">
                 <label>ZIP</label>
