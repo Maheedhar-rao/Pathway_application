@@ -922,8 +922,6 @@ def validate_fields(form: dict) -> dict:
     if form.get('company_zip') and not ZIP_RE.match(form['company_zip']):
         errors['company_zip'] = 'Invalid ZIP'
 
-    if form.get('company_state') and not STATE_RE.match(form['company_state']):
-        errors['company_state'] = 'Use 2-letter state'
 
     # Owner 0 optional FICO validation
     if not _is_valid_fico(form.get('owner_0_fico')):
@@ -941,8 +939,6 @@ def validate_fields(form: dict) -> dict:
             errors['owner_1_mobile'] = 'Invalid phone number'
         if form.get('owner_1_zip') and not ZIP_RE.match(form['owner_1_zip']):
             errors['owner_1_zip'] = 'Invalid ZIP'
-        if form.get('owner_1_state') and not STATE_RE.match(form['owner_1_state']):
-            errors['owner_1_state'] = 'Use 2-letter state'
 
     # E-sign consent must be explicitly "Yes"
     if form.get('esign_consent') and form.get('esign_consent') != 'Yes':
