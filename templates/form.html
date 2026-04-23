@@ -106,6 +106,7 @@
           method="POST"
           enctype="multipart/form-data"
           autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
       <!-- Hidden rep tracking field (HMAC-signed to prevent tampering) -->
       {% if rep_code %}
       <input type="hidden" name="rep_code" value="{{ rep_code }}" />
