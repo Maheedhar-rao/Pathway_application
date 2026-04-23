@@ -125,6 +125,11 @@
           Uploaded: {{ ', '.join(uploaded) }}
         </div>
         {% endif %}
+        {% if failed %}
+        <div class="success-pill" style="background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.3);color:#f87171;">
+          Failed to upload: {{ ', '.join(failed) }} — please try again.
+        </div>
+        {% endif %}
       </div>
     </div>
 
@@ -139,6 +144,7 @@
           Click <strong>Complete Submission</strong> below to finalize your application.
         </p>
         <form action="{{ url_for('upload_docs') }}" method="POST" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
           <input type="hidden" name="sid" value="{{ sid or '' }}"/>
           <div class="field" style="margin-bottom: 16px;">
             <label>Bank Statements</label>

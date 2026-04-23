@@ -16,9 +16,11 @@ import os
 import re
 import smtplib
 import threading
+import time
 import traceback
 import urllib.parse
 import urllib.request
+import uuid
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
@@ -150,6 +152,10 @@ def _get_signed_url(bucket_path: str, expires_in: int = SIGNED_URL_EXPIRY) -> st
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("APP_SECRET", "dev-secret")
+app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB upload cap
+
+from flask_wtf.csrf import CSRFProtect
+csrf = CSRFProtect(app)
 
 # -------------------- Validation --------------------
 SSN_RE = re.compile(r'^(?!000|666|9\d\d)(\d{3})-(?!00)(\d{2})-(?!0000)(\d{4})$')
@@ -725,6 +731,16 @@ def _application_message_id(submission_id: int) -> str:
     return f"<application-{submission_id}@pathwaycatalyst.app>"
 
 
+def _mark_email_sent(submission_id: int, column: str):
+    """Stamp initial_email_sent_at or docs_email_sent_at after a successful send."""
+    try:
+        sb.table("applications").update(
+            {column: datetime.utcnow().isoformat()}
+        ).eq("id", submission_id).execute()
+    except Exception as exc:
+        log.error("Failed to mark %s for %s: %s", column, submission_id, exc)
+
+
 def send_email_with_pdf(
     to_emails: List[str],
     business_name: str,
@@ -1072,11 +1088,13 @@ def submit():
                 # Send email in background thread — user gets instant redirect
                 def _bg_send(recips, biz, pdf_buf, sid, rname, files):
                     try:
-                        send_email_with_pdf(
+                        ok = send_email_with_pdf(
                             to_emails=recips, business_name=biz,
                             pdf_buffer=pdf_buf, submission_id=sid,
                             rep_name=rname, attached_files=files,
                         )
+                        if ok:
+                            _mark_email_sent(sid, "initial_email_sent_at")
                     except Exception as exc:
                         log.error("Background email failed for %s: %s", sid, exc)
 
@@ -1104,45 +1122,55 @@ def upload_docs():
 
     saved = []
     attached_paths: List[str] = []
+    failed: List[str] = []
+
+    def _store_one(file_storage, dtype: str):
+        """Upload a single file with retry. Returns True on success, False on
+        failure (failure is logged but never raises so the batch continues)."""
+        original = file_storage.filename or "file"
+        safe = original.replace("/", "_").replace("\\", "_")
+        # Unique prefix prevents filename collisions within a submission.
+        unique = f"{uuid.uuid4().hex[:8]}_{safe}"
+        bucket_path = f"{sid}/{dtype}/{unique}"
+        file_bytes = file_storage.read()
+        content_type = file_storage.content_type or "application/octet-stream"
+
+        last_exc = None
+        for attempt in range(3):
+            try:
+                size = _upload_to_storage(file_bytes, bucket_path, content_type)
+                sb.table("application_files").insert({
+                    "application_id": sid,
+                    "filename": safe,
+                    "storage_path": bucket_path,
+                    "size_bytes": size,
+                    "doc_type": dtype,
+                }).execute()
+                attached_paths.append(bucket_path)
+                return True
+            except Exception as exc:
+                last_exc = exc
+                log.warning("Upload attempt %d failed for %s (%s): %s",
+                            attempt + 1, original, dtype, exc)
+                time.sleep(0.5)
+
+        log.error("Upload failed after 3 attempts for %s (%s): %s", original, dtype, last_exc)
+        failed.append(original)
+        return False
 
     # Bank statements (multiple)
     for f in request.files.getlist("bank_files"):
         if not f or not f.filename:
             continue
-        safe = f.filename.replace("/", "_").replace("\\", "_")
-        bucket_path = f"{sid}/bank_statement/{safe}"
-        file_bytes = f.read()
-        content_type = f.content_type or "application/pdf"
-        size = _upload_to_storage(file_bytes, bucket_path, content_type)
-        sb.table("application_files").insert({
-            "application_id": sid,
-            "filename": safe,
-            "storage_path": bucket_path,
-            "size_bytes": size,
-            "doc_type": "bank_statement",
-        }).execute()
-        attached_paths.append(bucket_path)
-        if "bank_statement" not in saved:
+        if _store_one(f, "bank_statement") and "bank_statement" not in saved:
             saved.append("bank_statement")
 
     # Voided check + ID (single files)
     for field, dtype in [("voided_check", "voided_check"), ("id_doc", "id_doc")]:
         f = request.files.get(field)
         if f and f.filename:
-            safe = f.filename.replace("/", "_").replace("\\", "_")
-            bucket_path = f"{sid}/{dtype}/{safe}"
-            file_bytes = f.read()
-            content_type = f.content_type or "application/pdf"
-            size = _upload_to_storage(file_bytes, bucket_path, content_type)
-            sb.table("application_files").insert({
-                "application_id": sid,
-                "filename": safe,
-                "storage_path": bucket_path,
-                "size_bytes": size,
-                "doc_type": dtype,
-            }).execute()
-            attached_paths.append(bucket_path)
-            saved.append(dtype)
+            if _store_one(f, dtype):
+                saved.append(dtype)
 
     # Email uploaded documents to team + rep (in background)
     if attached_paths:
@@ -1161,12 +1189,14 @@ def upload_docs():
 
             def _bg_send_docs(recips, biz, sid_, rname, files):
                 try:
-                    send_email_with_pdf(
+                    ok = send_email_with_pdf(
                         to_emails=recips, business_name=biz,
                         pdf_buffer=None, submission_id=sid_,
                         rep_name=rname, attached_files=files,
                         email_type="docs_update",
                     )
+                    if ok:
+                        _mark_email_sent(sid_, "docs_email_sent_at")
                 except Exception as exc:
                     log.error("Background docs email failed for %s: %s", sid_, exc)
 
@@ -1179,7 +1209,7 @@ def upload_docs():
         except Exception as e:
             log.error("Failed to queue docs email for %s: %s", sid, e)
 
-    return render_template("thank_you.html", sid=sid, uploaded=saved)
+    return render_template("thank_you.html", sid=sid, uploaded=saved, failed=failed)
 
 # -------------------- JSON APIs for Dashboard --------------------
 @app.route("/api/submissions")
