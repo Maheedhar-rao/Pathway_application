@@ -122,7 +122,7 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="20 6 9 17 4 12"/>
           </svg>
-          Uploaded: {{ ', '.join(uploaded) }}
+          Docs uploaded
         </div>
         {% endif %}
         {% if failed %}
@@ -148,9 +148,10 @@
           <input type="hidden" name="sid" value="{{ sid or '' }}"/>
           <div class="field" style="margin-bottom: 16px;">
             <label>Bank Statements</label>
-            <div class="uploader" style="padding: 16px;">
-              <p style="margin: 0 0 8px; font-size: 13px; color: var(--muted);">Upload PDFs (optional, you can select multiple)</p>
-              <input type="file" name="bank_files" accept="application/pdf" multiple />
+            <div class="uploader" id="bank-uploader" style="padding: 16px;">
+              <p style="margin: 0 0 8px; font-size: 13px; color: var(--muted);">Add PDFs one at a time or all at once — drag &amp; drop works too.</p>
+              <input type="file" id="bank-files-input" name="bank_files" accept="application/pdf" multiple />
+              <div id="bank-files-list" style="margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;"></div>
             </div>
           </div>
           <div class="grid cols-2">
@@ -192,6 +193,84 @@
       history.pushState(null, '', location.href);
       window.addEventListener('popstate', function () { history.go(1); });
     } catch(e){}
+
+    // Accumulate bank-statement selections across multiple picks / drag-and-drop,
+    // so picking files one at a time doesn't overwrite prior selections.
+    (function(){
+      var input = document.getElementById('bank-files-input');
+      var list = document.getElementById('bank-files-list');
+      var drop = document.getElementById('bank-uploader');
+      if (!input || !list || !drop || typeof DataTransfer === 'undefined') return;
+
+      var files = [];
+      function keyOf(f){ return f.name + '::' + f.size; }
+      function isPdf(f){
+        if (f.type === 'application/pdf') return true;
+        if (!f.type && /\.pdf$/i.test(f.name)) return true;
+        return false;
+      }
+      function escapeHtml(s){
+        return String(s).replace(/[&<>"']/g, function(c){
+          return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+        });
+      }
+      function render(){
+        list.innerHTML = '';
+        files.forEach(function(f, i){
+          var chip = document.createElement('span');
+          chip.className = 'chip';
+          chip.innerHTML = '<span style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(f.name) + '</span>';
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.setAttribute('aria-label', 'Remove ' + f.name);
+          btn.textContent = '×';
+          btn.style.cssText = 'background:none;border:0;color:inherit;cursor:pointer;font-size:16px;line-height:1;padding:0 2px;';
+          btn.addEventListener('click', function(){ files.splice(i, 1); sync(); });
+          chip.appendChild(btn);
+          list.appendChild(chip);
+        });
+      }
+      function sync(){
+        var dt = new DataTransfer();
+        files.forEach(function(f){ dt.items.add(f); });
+        input.files = dt.files;
+        render();
+      }
+      function addFiles(incoming){
+        var have = {};
+        files.forEach(function(f){ have[keyOf(f)] = true; });
+        for (var i = 0; i < incoming.length; i++) {
+          var f = incoming[i];
+          if (!isPdf(f)) continue;
+          var k = keyOf(f);
+          if (have[k]) continue;
+          files.push(f);
+          have[k] = true;
+        }
+        sync();
+      }
+
+      input.addEventListener('change', function(){
+        addFiles(Array.prototype.slice.call(input.files || []));
+      });
+
+      ['dragenter','dragover'].forEach(function(ev){
+        drop.addEventListener(ev, function(e){
+          e.preventDefault(); e.stopPropagation();
+          drop.classList.add('drag-over');
+        });
+      });
+      ['dragleave','drop'].forEach(function(ev){
+        drop.addEventListener(ev, function(e){
+          e.preventDefault(); e.stopPropagation();
+          drop.classList.remove('drag-over');
+        });
+      });
+      drop.addEventListener('drop', function(e){
+        var dropped = (e.dataTransfer && e.dataTransfer.files) ? Array.prototype.slice.call(e.dataTransfer.files) : [];
+        addFiles(dropped);
+      });
+    })();
   </script>
 </body>
 </html>
