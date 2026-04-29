@@ -506,6 +506,35 @@
                 </div>
               </div>
             </div>
+
+            <!-- Second Owner Signature -->
+            <div class="signature-section" style="margin-top:18px;">
+              <div class="grid cols-2" style="gap:20px;align-items:start;">
+                <div class="field">
+                  <label>Sign Below <span style="color:var(--danger);">*</span></label>
+                  <div class="sig-pad-wrap">
+                    <canvas id="signatureCanvas1" width="480" height="180"></canvas>
+                    <button type="button" id="clearSigBtn1" class="btn-clear-sig" title="Clear signature">Clear</button>
+                  </div>
+                  <input type="hidden" name="owner_1_signature_data" id="signatureData1" />
+                  <p class="sig-hint">Use your mouse or finger to sign above</p>
+                </div>
+                <div class="field">
+                  <label>Date of Signature <span style="color:var(--danger);">*</span></label>
+                  <input type="date"
+                         name="owner_1_signature_date"
+                         id="signatureDate1"
+                         value="{{ (form.get('owner_1_signature_date') if form else '') }}" />
+                  <div style="margin-top:16px;">
+                    <label>Print Name <span style="color:var(--danger);">*</span></label>
+                    <input name="owner_1_signature_print_name"
+                           id="signaturePrintName1"
+                           placeholder="Full legal name"
+                           value="{{ (form.get('owner_1_signature_print_name') if form else '') }}" />
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -644,6 +673,18 @@
           if (!show && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.type !== 'hidden') el.value = '';
           if (!show && el.tagName === 'SELECT') el.selectedIndex = 0;
         });
+        const pad = window.__owner1SignaturePad;
+        if (pad) {
+          if (!show) {
+            pad.clear();
+          } else if (pad.dateInput && !pad.dateInput.value) {
+            const now = new Date();
+            const y = now.getFullYear();
+            const m = String(now.getMonth() + 1).padStart(2, '0');
+            const d = String(now.getDate()).padStart(2, '0');
+            pad.dateInput.value = y + '-' + m + '-' + d;
+          }
+        }
       }
 
       sel.addEventListener('change', updateOwner1);
@@ -690,126 +731,135 @@
       });
     })();
 
-    // ── Signature Pad ──
+    // ── Signature Pads ──
     (function () {
-      const canvas = document.getElementById('signatureCanvas');
-      const hiddenInput = document.getElementById('signatureData');
-      const clearBtn = document.getElementById('clearSigBtn');
-      const dateInput = document.getElementById('signatureDate');
-      const wrap = canvas ? canvas.parentElement : null;
-      if (!canvas || !hiddenInput) return;
+      function initSignaturePad(canvasId, hiddenId, clearBtnId, dateId) {
+        const canvas = document.getElementById(canvasId);
+        const hiddenInput = document.getElementById(hiddenId);
+        const clearBtn = document.getElementById(clearBtnId);
+        const dateInput = dateId ? document.getElementById(dateId) : null;
+        const wrap = canvas ? canvas.parentElement : null;
+        if (!canvas || !hiddenInput) return null;
 
-      const ctx = canvas.getContext('2d');
-      let drawing = false;
-      let hasSigned = false;
+        const ctx = canvas.getContext('2d');
+        let drawing = false;
+        let hasSigned = false;
 
-      // High-DPI scaling
-      function scaleCanvas() {
-        const rect = canvas.getBoundingClientRect();
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width = rect.width * dpr;
-        canvas.height = rect.height * dpr;
-        ctx.scale(dpr, dpr);
-        canvas.style.width = rect.width + 'px';
-        canvas.style.height = rect.height + 'px';
-        // Pen settings
-        ctx.strokeStyle = '#e2e8f0';
-        ctx.lineWidth = 2.5;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-      }
-      scaleCanvas();
-      window.addEventListener('resize', function () {
-        const data = hasSigned ? canvas.toDataURL('image/png') : null;
+        function scaleCanvas() {
+          const rect = canvas.getBoundingClientRect();
+          const dpr = window.devicePixelRatio || 1;
+          canvas.width = rect.width * dpr;
+          canvas.height = rect.height * dpr;
+          ctx.scale(dpr, dpr);
+          canvas.style.width = rect.width + 'px';
+          canvas.style.height = rect.height + 'px';
+          ctx.strokeStyle = '#e2e8f0';
+          ctx.lineWidth = 2.5;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+        }
         scaleCanvas();
-        if (data && hasSigned) {
-          const img = new window.Image();
-          img.onload = function () {
-            const rect = canvas.getBoundingClientRect();
-            ctx.drawImage(img, 0, 0, rect.width, rect.height);
-          };
-          img.src = data;
+        window.addEventListener('resize', function () {
+          const data = hasSigned ? canvas.toDataURL('image/png') : null;
+          scaleCanvas();
+          if (data && hasSigned) {
+            const img = new window.Image();
+            img.onload = function () {
+              const rect = canvas.getBoundingClientRect();
+              ctx.drawImage(img, 0, 0, rect.width, rect.height);
+            };
+            img.src = data;
+          }
+        });
+
+        if (dateInput && !dateInput.value) {
+          const now = new Date();
+          const y = now.getFullYear();
+          const m = String(now.getMonth() + 1).padStart(2, '0');
+          const d = String(now.getDate()).padStart(2, '0');
+          dateInput.value = y + '-' + m + '-' + d;
         }
-      });
 
-      // Auto-fill today's date if empty
-      if (dateInput && !dateInput.value) {
-        const now = new Date();
-        const y = now.getFullYear();
-        const m = String(now.getMonth() + 1).padStart(2, '0');
-        const d = String(now.getDate()).padStart(2, '0');
-        dateInput.value = y + '-' + m + '-' + d;
-      }
-
-      function getPos(e) {
-        const rect = canvas.getBoundingClientRect();
-        const touch = e.touches ? e.touches[0] : e;
-        return {
-          x: touch.clientX - rect.left,
-          y: touch.clientY - rect.top
-        };
-      }
-
-      function startDraw(e) {
-        e.preventDefault();
-        drawing = true;
-        if (wrap) wrap.classList.add('signing');
-        const pos = getPos(e);
-        ctx.beginPath();
-        ctx.moveTo(pos.x, pos.y);
-      }
-
-      function draw(e) {
-        if (!drawing) return;
-        e.preventDefault();
-        const pos = getPos(e);
-        ctx.lineTo(pos.x, pos.y);
-        ctx.stroke();
-        hasSigned = true;
-      }
-
-      function endDraw(e) {
-        if (!drawing) return;
-        e.preventDefault();
-        drawing = false;
-        if (wrap) wrap.classList.remove('signing');
-        if (hasSigned) {
-          if (wrap) wrap.classList.add('has-sig');
-          hiddenInput.value = canvas.toDataURL('image/png');
+        function getPos(e) {
+          const rect = canvas.getBoundingClientRect();
+          const touch = e.touches ? e.touches[0] : e;
+          return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
         }
-      }
-
-      // Mouse events
-      canvas.addEventListener('mousedown', startDraw);
-      canvas.addEventListener('mousemove', draw);
-      canvas.addEventListener('mouseup', endDraw);
-      canvas.addEventListener('mouseleave', endDraw);
-
-      // Touch events
-      canvas.addEventListener('touchstart', startDraw, { passive: false });
-      canvas.addEventListener('touchmove', draw, { passive: false });
-      canvas.addEventListener('touchend', endDraw);
-      canvas.addEventListener('touchcancel', endDraw);
-
-      // Clear button
-      if (clearBtn) {
-        clearBtn.addEventListener('click', function () {
+        function startDraw(e) {
+          e.preventDefault();
+          drawing = true;
+          if (wrap) wrap.classList.add('signing');
+          const pos = getPos(e);
+          ctx.beginPath();
+          ctx.moveTo(pos.x, pos.y);
+        }
+        function draw(e) {
+          if (!drawing) return;
+          e.preventDefault();
+          const pos = getPos(e);
+          ctx.lineTo(pos.x, pos.y);
+          ctx.stroke();
+          hasSigned = true;
+        }
+        function endDraw(e) {
+          if (!drawing) return;
+          e.preventDefault();
+          drawing = false;
+          if (wrap) wrap.classList.remove('signing');
+          if (hasSigned) {
+            if (wrap) wrap.classList.add('has-sig');
+            hiddenInput.value = canvas.toDataURL('image/png');
+          }
+        }
+        function clearPad() {
           const rect = canvas.getBoundingClientRect();
           ctx.clearRect(0, 0, rect.width, rect.height);
           hasSigned = false;
           hiddenInput.value = '';
           if (wrap) wrap.classList.remove('has-sig');
-        });
+        }
+
+        canvas.addEventListener('mousedown', startDraw);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', endDraw);
+        canvas.addEventListener('mouseleave', endDraw);
+        canvas.addEventListener('touchstart', startDraw, { passive: false });
+        canvas.addEventListener('touchmove', draw, { passive: false });
+        canvas.addEventListener('touchend', endDraw);
+        canvas.addEventListener('touchcancel', endDraw);
+
+        if (clearBtn) clearBtn.addEventListener('click', clearPad);
+
+        return {
+          canvas: canvas,
+          hiddenInput: hiddenInput,
+          dateInput: dateInput,
+          isSigned: function () { return hasSigned && !!hiddenInput.value; },
+          clear: clearPad,
+        };
       }
 
-      // Before submit — ensure signature is captured
+      const primary = initSignaturePad('signatureCanvas', 'signatureData', 'clearSigBtn', 'signatureDate');
+      const secondary = initSignaturePad('signatureCanvas1', 'signatureData1', 'clearSigBtn1', 'signatureDate1');
+
+      // Expose secondary pad for the owner1 toggle to clear it
+      window.__owner1SignaturePad = secondary;
+
       const form = document.getElementById('appForm');
-      if (form) {
+      if (form && primary) {
         form.addEventListener('submit', function (e) {
-          if (!hasSigned || !hiddenInput.value) {
+          if (!primary.isSigned()) {
             e.preventDefault();
             alert('Please sign the application before submitting.');
-            canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            primary.canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return false;
+          }
+          const hasOwner1Sel = document.getElementById('has_owner_1');
+          const owner1Enabled = hasOwner1Sel && hasOwner1Sel.value === 'Yes';
+          if (owner1Enabled && secondary && !secondary.isSigned()) {
+            e.preventDefault();
+            alert('Please have the second owner sign the application before submitting.');
+            secondary.canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
             return false;
           }
         });

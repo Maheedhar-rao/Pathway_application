@@ -448,6 +448,28 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
             'SigLabel', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY
         )))
 
+    # Second-owner signature block (only if a second owner was added)
+    if (form_data.get("has_owner_1") or "No").strip() == "Yes":
+        elements.append(Spacer(1, 14))
+        owner1_sig_info = [
+            ["Print Name", form_data.get("owner_1_signature_print_name", "")],
+            ["Date Signed", form_data.get("owner_1_signature_date", "")],
+        ]
+        elements.append(_styled_section_table(owner1_sig_info))
+
+        owner1_sig_data = form_data.get("owner_1_signature_data", "")
+        if owner1_sig_data and owner1_sig_data.startswith("data:image/png;base64,"):
+            raw1 = base64.b64decode(owner1_sig_data.split(",", 1)[1])
+            sig_buf1 = BytesIO(raw1)
+            sig_img1 = Image(sig_buf1, width=3.2*inch, height=1.2*inch)
+            sig_img1.hAlign = 'LEFT'
+            elements.append(Spacer(1, 8))
+            elements.append(sig_img1)
+            elements.append(HRFlowable(width="50%", thickness=0.5, color=BRAND_DARK, spaceAfter=4))
+            elements.append(Paragraph("Second Owner Signature", ParagraphStyle(
+                'SigLabel2', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY
+            )))
+
     doc.build(elements)
     buffer.seek(0)
     return buffer
@@ -919,7 +941,8 @@ def validate_fields(form: dict) -> dict:
         owner1_req = [
             'owner_1_first','owner_1_last','owner_1_pct','owner_1_dob','owner_1_ssn',
             'owner_1_email','owner_1_mobile',
-            'owner_1_addr1','owner_1_city','owner_1_state','owner_1_zip'
+            'owner_1_addr1','owner_1_city','owner_1_state','owner_1_zip',
+            'owner_1_signature_data','owner_1_signature_date','owner_1_signature_print_name',
         ]
         for k in owner1_req:
             if not form.get(k):
