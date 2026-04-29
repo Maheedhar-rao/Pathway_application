@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin Sign In</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <style>
+    .login-wrap { max-width: 420px; margin: 64px auto; }
+    .login-title { text-align: center; margin: 0 0 6px; font-size: 22px; }
+    .login-sub { text-align: center; color: var(--muted); margin: 0 0 22px; font-size: 14px; }
+    .login-error {
+      background: rgba(239, 68, 68, .12);
+      border: 1px solid rgba(239, 68, 68, .35);
+      color: #fca5a5;
+      padding: 10px 14px;
+      border-radius: 8px;
+      margin-bottom: 14px;
+      font-size: 14px;
+    }
+    .login-card .field { margin-bottom: 14px; }
+    .login-card label { display: block; margin-bottom: 6px; font-size: 13px; }
+    .login-card input { width: 100%; box-sizing: border-box; }
+    .login-actions { margin-top: 18px; }
+    .login-actions .btn { width: 100%; }
+  </style>
+</head>
+<body>
+  <header class="pc-header">
+    <div class="brand">
+      <div class="brand-left">
+        <div class="logo-wrap">
+          <img
+            src="{{ url_for('static', filename='pathway-logo.png') }}"
+            alt="Pathway Catalyst Logo"
+            class="logo"
+            loading="eager"
+          />
+        </div>
+        <div class="brand-text">
+          <span class="badge">Harvest Lending X Pathway Catalyst</span>
+          <h1>Admin Sign In</h1>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="login-wrap">
+      <div class="card login-card" style="padding: 22px;">
+        <h2 class="login-title">Sign in</h2>
+        <p class="login-sub">Use your admin email and password.</p>
+
+        {% if error %}
+          <div class="login-error">{{ error }}</div>
+        {% endif %}
+
+        <form method="POST" action="{{ url_for('login') }}" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <div class="field">
+            <label for="email">Email</label>
+            <input id="email" type="email" name="email" required autofocus />
+          </div>
+          <div class="field">
+            <label for="password">Password</label>
+            <input id="password" type="password" name="password" required />
+          </div>
+          <div class="login-actions">
+            <button type="submit" class="btn primary"><span>Sign In</span></button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </main>
+</body>
+</html>
