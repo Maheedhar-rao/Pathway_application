@@ -42,10 +42,13 @@ def _ipv4_only_getaddrinfo(*args, **kwargs):
 
 _socket.getaddrinfo = _ipv4_only_getaddrinfo
 
+from functools import wraps
+
 from flask import (
     Flask, request, redirect, url_for, render_template, jsonify,
-    send_from_directory, abort
+    send_from_directory, abort, session
 )
+from werkzeug.security import check_password_hash
 from supabase import create_client, Client
 from dotenv import load_dotenv, find_dotenv
 
@@ -156,6 +159,20 @@ app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB upload cap
 
 from flask_wtf.csrf import CSRFProtect
 csrf = CSRFProtect(app)
+
+# -------------------- Admin Auth --------------------
+ADMIN_EMAIL = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
+ADMIN_PASSWORD_HASH = os.environ.get("ADMIN_PASSWORD_HASH", "")
+
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("admin_authed"):
+            if request.path.startswith("/api/"):
+                abort(401)
+            return redirect(url_for("login", next=request.path))
+        return view(*args, **kwargs)
+    return wrapped
 
 # -------------------- Validation --------------------
 SSN_RE = re.compile(r'^(?!000|666|9\d\d)(\d{3})-(?!00)(\d{2})-(?!0000)(\d{4})$')
@@ -1236,6 +1253,7 @@ def upload_docs():
 
 # -------------------- JSON APIs for Dashboard --------------------
 @app.route("/api/submissions")
+@admin_required
 def api_submissions():
     try:
         limit = int(request.args.get("limit", "100"))
@@ -1266,6 +1284,7 @@ def api_submissions():
     return jsonify(rows)
 
 @app.route("/api/submissions/<int:sid>")
+@admin_required
 def api_submission_detail(sid: int):
     app_res = sb.table("applications").select(
         "id, created_at, business_legal_name, industry, loan_amount, owners, payload, company_website, rep_name, rep_email"
@@ -1292,6 +1311,7 @@ def api_submission_detail(sid: int):
     return jsonify(app_row)
 
 @app.route("/api/reps")
+@admin_required
 def api_reps():
     """List all sales reps with their unique links."""
     base_url = request.host_url.rstrip("/")
@@ -1305,12 +1325,44 @@ def api_reps():
         })
     return jsonify(reps_list)
 
-# Optional: serve static admin dashboard page
+# -------------------- Admin Login --------------------
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("admin_authed"):
+        return redirect(request.args.get("next") or url_for("admin_static_dashboard"))
+
+    error = None
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+        password = request.form.get("password") or ""
+        if (
+            ADMIN_EMAIL
+            and ADMIN_PASSWORD_HASH
+            and email == ADMIN_EMAIL
+            and check_password_hash(ADMIN_PASSWORD_HASH, password)
+        ):
+            session.clear()
+            session["admin_authed"] = True
+            session["admin_email"] = email
+            return redirect(request.args.get("next") or url_for("admin_static_dashboard"))
+        log.warning("Failed admin login attempt for email=%r from %s", email, request.remote_addr)
+        error = "Invalid email or password."
+
+    return render_template("login.html", error=error), (401 if error else 200)
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+# Admin dashboard pages
 @app.route("/admin")
+@admin_required
 def admin_static_dashboard():
     return send_from_directory(str(APP_DIR / "public"), "dashboard.html")
 
 @app.route("/admin/reps")
+@admin_required
 def admin_rep_links():
     return send_from_directory(str(APP_DIR / "public"), "rep-links.html")
 
