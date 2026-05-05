@@ -677,12 +677,17 @@
         if (pad) {
           if (!show) {
             pad.clear();
-          } else if (pad.dateInput && !pad.dateInput.value) {
-            const now = new Date();
-            const y = now.getFullYear();
-            const m = String(now.getMonth() + 1).padStart(2, '0');
-            const d = String(now.getDate()).padStart(2, '0');
-            pad.dateInput.value = y + '-' + m + '-' + d;
+          } else {
+            // Section just became visible — re-measure the canvas now that
+            // it has real CSS dimensions (it was 0×0 while display:none).
+            pad.rescale();
+            if (pad.dateInput && !pad.dateInput.value) {
+              const now = new Date();
+              const y = now.getFullYear();
+              const m = String(now.getMonth() + 1).padStart(2, '0');
+              const d = String(now.getDate()).padStart(2, '0');
+              pad.dateInput.value = y + '-' + m + '-' + d;
+            }
           }
         }
       }
@@ -830,12 +835,26 @@
 
         if (clearBtn) clearBtn.addEventListener('click', clearPad);
 
+        function rescale() {
+          const data = hasSigned ? canvas.toDataURL('image/png') : null;
+          scaleCanvas();
+          if (data && hasSigned) {
+            const img = new window.Image();
+            img.onload = function () {
+              const rect = canvas.getBoundingClientRect();
+              ctx.drawImage(img, 0, 0, rect.width, rect.height);
+            };
+            img.src = data;
+          }
+        }
+
         return {
           canvas: canvas,
           hiddenInput: hiddenInput,
           dateInput: dateInput,
           isSigned: function () { return hasSigned && !!hiddenInput.value; },
           clear: clearPad,
+          rescale: rescale,
         };
       }
 
