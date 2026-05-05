@@ -751,6 +751,11 @@
         let hasSigned = false;
 
         function scaleCanvas() {
+          // Clear any inline dimensions from a prior call so the CSS-driven
+          // size (width:100%, height:180px) takes effect — otherwise a 0×0
+          // measurement taken while the section was hidden would persist.
+          canvas.style.width = '';
+          canvas.style.height = '';
           const rect = canvas.getBoundingClientRect();
           const dpr = window.devicePixelRatio || 1;
           canvas.width = rect.width * dpr;
