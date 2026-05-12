@@ -122,6 +122,97 @@
       background: linear-gradient(135deg, #059669, #34d399);
     }
 
+    .icon-btn {
+      background: rgba(15,23,42,.55);
+      border: 1px solid rgba(148,163,184,.2);
+      color: var(--muted);
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all .15s;
+    }
+    .icon-btn:hover {
+      color: var(--text);
+      border-color: rgba(148,163,184,.4);
+    }
+    .icon-btn.danger:hover {
+      color: #fca5a5;
+      border-color: rgba(248,113,113,.4);
+    }
+
+    .rep-item.inactive {
+      opacity: .55;
+    }
+    .rep-item.inactive .rep-name::after {
+      content: " (inactive)";
+      color: var(--muted);
+      font-weight: 400;
+      font-size: 12px;
+    }
+
+    .actions {
+      display: inline-flex;
+      gap: 6px;
+    }
+
+    .new-rep {
+      padding: 18px 20px;
+      border-bottom: 1px solid rgba(148,163,184,.1);
+      display: grid;
+      grid-template-columns: 1fr 1.4fr 1.6fr auto;
+      gap: 10px;
+      align-items: center;
+    }
+    .new-rep input {
+      background: rgba(15,23,42,.55);
+      border: 1px solid rgba(148,163,184,.2);
+      border-radius: 8px;
+      padding: 9px 12px;
+      color: var(--text);
+      font-size: 13px;
+      font-family: inherit;
+    }
+    .new-rep input:focus {
+      outline: none;
+      border-color: rgba(96,165,250,.5);
+    }
+    .new-rep .copy-btn {
+      padding: 9px 14px;
+    }
+
+    .form-error {
+      grid-column: 1 / -1;
+      color: #fca5a5;
+      font-size: 12px;
+      margin-top: -4px;
+    }
+
+    .edit-fields {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      flex: 2;
+    }
+    .edit-fields input {
+      background: rgba(15,23,42,.55);
+      border: 1px solid rgba(148,163,184,.2);
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: var(--text);
+      font-size: 13px;
+      font-family: inherit;
+      min-width: 0;
+    }
+    .edit-fields input:focus {
+      outline: none;
+      border-color: rgba(96,165,250,.5);
+    }
+
+    @media (max-width: 700px) {
+      .edit-fields { grid-template-columns: 1fr; }
+    }
+
     .stats {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -174,6 +265,9 @@
       .stats {
         grid-template-columns: 1fr;
       }
+      .new-rep {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -210,42 +304,180 @@
   </div>
 
   <script>
-    const baseUrl = window.location.origin;
+    let csrfToken = '';
+    let editingCode = null;
+
+    function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    async function fetchCsrfToken() {
+      try {
+        const res = await fetch('/api/csrf-token');
+        const data = await res.json();
+        csrfToken = data.token || '';
+      } catch (err) {
+        console.error('Failed to fetch CSRF token:', err);
+      }
+    }
+
+    async function apiWrite(path, method, body) {
+      const res = await fetch(path, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrfToken,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      let data = null;
+      try { data = await res.json(); } catch {}
+      if (!res.ok) {
+        throw new Error((data && data.error) || `Request failed (${res.status})`);
+      }
+      return data;
+    }
 
     async function loadReps() {
       try {
         const res = await fetch('/api/reps');
         const reps = await res.json();
 
-        document.getElementById('totalReps').textContent = reps.length;
+        const active = reps.filter(r => r.active);
+        document.getElementById('totalReps').textContent = active.length;
 
         const container = document.getElementById('repList');
-        container.innerHTML = reps.map(rep => `
-          <div class="rep-item">
-            <div class="rep-info">
-              <div class="rep-name">${rep.name}</div>
-              <div class="rep-email">${rep.email}</div>
-            </div>
-            <div class="rep-link" id="link-${rep.code}">${rep.link}</div>
-            <button class="copy-btn" onclick="copyLink('${rep.code}', this)">Copy Link</button>
+        container.innerHTML = `
+          <div class="new-rep">
+            <input id="newRepCode" type="text" placeholder="code (e.g. alex)" autocomplete="off" />
+            <input id="newRepName" type="text" placeholder="Name" autocomplete="off" />
+            <input id="newRepEmail" type="email" placeholder="email@pathwaycatalyst.com" autocomplete="off" />
+            <button class="copy-btn" id="addRepBtn">+ Add Rep</button>
+            <div class="form-error" id="newRepError" style="display:none"></div>
           </div>
-        `).join('');
+          ${reps.map(rep => repRowHtml(rep)).join('')}
+        `;
+
+        document.getElementById('addRepBtn').addEventListener('click', onAddRep);
+        document.getElementById('newRepCode').addEventListener('keydown', e => { if (e.key === 'Enter') onAddRep(); });
+        document.getElementById('newRepName').addEventListener('keydown', e => { if (e.key === 'Enter') onAddRep(); });
+        document.getElementById('newRepEmail').addEventListener('keydown', e => { if (e.key === 'Enter') onAddRep(); });
 
       } catch (err) {
         console.error('Failed to load reps:', err);
       }
     }
 
+    function repRowHtml(rep) {
+      const c = escapeHtml(rep.code);
+      if (editingCode === rep.code) {
+        return `
+          <div class="rep-item${rep.active ? '' : ' inactive'}">
+            <div class="rep-info">
+              <div class="rep-name">${escapeHtml(rep.name)}</div>
+              <div class="rep-email" style="font-family:monospace">${c}</div>
+            </div>
+            <div class="edit-fields">
+              <input id="edit-name-${c}" type="text" value="${escapeHtml(rep.name)}" />
+              <input id="edit-email-${c}" type="email" value="${escapeHtml(rep.email)}" />
+            </div>
+            <div class="actions">
+              <button class="copy-btn" onclick="saveEdit('${c}')">Save</button>
+              <button class="icon-btn" onclick="cancelEdit()">Cancel</button>
+            </div>
+          </div>
+        `;
+      }
+      const deactivateBtn = rep.active
+        ? `<button class="icon-btn danger" onclick="deactivateRep('${c}', '${escapeHtml(rep.name)}')">Deactivate</button>`
+        : '';
+      return `
+        <div class="rep-item${rep.active ? '' : ' inactive'}">
+          <div class="rep-info">
+            <div class="rep-name">${escapeHtml(rep.name)}</div>
+            <div class="rep-email">${escapeHtml(rep.email)}</div>
+          </div>
+          <div class="rep-link" id="link-${c}">${escapeHtml(rep.link)}</div>
+          <div class="actions">
+            <button class="copy-btn" onclick="copyLink('${c}', this)">Copy Link</button>
+            <button class="icon-btn" onclick="startEdit('${c}')">Edit</button>
+            ${deactivateBtn}
+          </div>
+        </div>
+      `;
+    }
+
+    function startEdit(code) {
+      editingCode = code;
+      loadReps();
+    }
+
+    function cancelEdit() {
+      editingCode = null;
+      loadReps();
+    }
+
+    async function saveEdit(code) {
+      const name = document.getElementById(`edit-name-${code}`).value.trim();
+      const email = document.getElementById(`edit-email-${code}`).value.trim();
+      try {
+        await apiWrite(`/api/reps/${encodeURIComponent(code)}`, 'PATCH', { name, email });
+        editingCode = null;
+        await loadReps();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function deactivateRep(code, name) {
+      if (!confirm(`Deactivate ${name}? Their link will stop working but historical submissions stay attributed to them.`)) return;
+      try {
+        await apiWrite(`/api/reps/${encodeURIComponent(code)}`, 'DELETE');
+        await loadReps();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function onAddRep() {
+      const codeEl = document.getElementById('newRepCode');
+      const nameEl = document.getElementById('newRepName');
+      const emailEl = document.getElementById('newRepEmail');
+      const errEl = document.getElementById('newRepError');
+      errEl.style.display = 'none';
+
+      const code = codeEl.value.trim().toLowerCase();
+      const name = nameEl.value.trim();
+      const email = emailEl.value.trim();
+      if (!code || !name || !email) {
+        errEl.textContent = 'Code, name, and email are required.';
+        errEl.style.display = 'block';
+        return;
+      }
+      try {
+        await apiWrite('/api/reps', 'POST', { code, name, email });
+        codeEl.value = nameEl.value = emailEl.value = '';
+        await loadReps();
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.style.display = 'block';
+      }
+    }
+
     async function loadStats() {
       try {
         const res = await fetch('/api/submissions?limit=1000');
-        const submissions = await res.json();
+        const data = await res.json();
+        const rows = (data && data.rows) || [];
+        const total = (data && data.total) || rows.length;
 
-        document.getElementById('totalSubmissions').textContent = submissions.length;
+        document.getElementById('totalSubmissions').textContent = total;
 
         // Count today's submissions
         const today = new Date().toDateString();
-        const todayCount = submissions.filter(s =>
+        const todayCount = rows.filter(s =>
           new Date(s.created_at).toDateString() === today
         ).length;
         document.getElementById('todaySubmissions').textContent = todayCount;
@@ -267,8 +499,11 @@
       });
     }
 
-    loadReps();
-    loadStats();
+    (async () => {
+      await fetchCsrfToken();
+      loadReps();
+      loadStats();
+    })();
   </script>
 </body>
 </html>
