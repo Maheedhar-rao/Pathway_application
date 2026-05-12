@@ -101,24 +101,50 @@ SAM_GOV_API_KEY = os.environ.get("SAM_GOV_API_KEY", "")
 TEAM_EMAIL = os.environ.get("TEAM_EMAIL", "team@pathwaycatalyst.com")
 
 # ---- Sales Rep Configuration ------------------------------------------------
-# Each rep has a unique code, name, and email
-# URL format: /?rep=<code>  e.g., /?rep=john
-SALES_REPS = {
-    "yuly": {"name": "Yuly", "email": "deals@pathwaycatalyst.com"},
-    "tom": {"name": "Tom", "email": "tom@pathwaycatalyst.com"},
-    "troy": {"name": "Troy", "email": "troy@pathwaycatalyst.com"},
-    "adrian": {"name": "Adrian", "email": "adrian@pathwaycatalyst.com"},
-    "frank": {"name": "Frank", "email": "frank@pathwaycatalyst.com"},
-    "andres": {"name": "Andres", "email": "andres@pathwaycatalyst.com"},
-    "ethan": {"name": "Ethan", "email": "ethan@pathwaycatalyst.com"},
-    "juliette":{"name": "Juliette", "email": "juliette@pathwaycatalyst.com"}
-}
+# Reps live in the Supabase `sales_reps` table (see migration
+# 20260512_add_sales_reps.sql). Admins manage them via the /admin/reps page.
+# URL format: /?rep=<code>  e.g., /?rep=tom
+_REP_CACHE_TTL = 60  # seconds; bumped explicitly by writes via _invalidate_rep_cache()
+_rep_cache: dict = {"reps": None, "expires_at": 0.0}
+_rep_cache_lock = threading.Lock()
 
-def get_rep_info(rep_code: str) -> Optional[dict]:
-    """Get rep info by code, case-insensitive."""
+def _load_reps_from_db() -> dict:
+    """Fetch every rep (active and inactive) keyed by lowercase code."""
+    res = sb.table("sales_reps").select("code, name, email, active, created_at, updated_at").execute()
+    rows = res.data or []
+    out = {}
+    for r in rows:
+        code = (r.get("code") or "").lower()
+        if code:
+            out[code] = r
+    return out
+
+def _get_reps_cached() -> dict:
+    now = time.time()
+    if _rep_cache["reps"] is not None and now < _rep_cache["expires_at"]:
+        return _rep_cache["reps"]
+    with _rep_cache_lock:
+        if _rep_cache["reps"] is not None and time.time() < _rep_cache["expires_at"]:
+            return _rep_cache["reps"]
+        _rep_cache["reps"] = _load_reps_from_db()
+        _rep_cache["expires_at"] = time.time() + _REP_CACHE_TTL
+        return _rep_cache["reps"]
+
+def _invalidate_rep_cache() -> None:
+    with _rep_cache_lock:
+        _rep_cache["reps"] = None
+        _rep_cache["expires_at"] = 0.0
+
+def get_rep_info(rep_code: str, include_inactive: bool = False) -> Optional[dict]:
+    """Get rep info by code, case-insensitive. Inactive reps are hidden by default."""
     if not rep_code:
         return None
-    return SALES_REPS.get(rep_code.lower().strip())
+    rec = _get_reps_cached().get(rep_code.lower().strip())
+    if not rec:
+        return None
+    if not include_inactive and not rec.get("active", True):
+        return None
+    return {"name": rec["name"], "email": rec["email"]}
 
 def sign_rep_code(rep_code: str) -> str:
     """Generate HMAC signature to prevent rep_code tampering."""
@@ -157,7 +183,7 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("APP_SECRET", "dev-secret")
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB upload cap
 
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf.csrf import CSRFProtect, generate_csrf
 csrf = CSRFProtect(app)
 
 # -------------------- Admin Auth --------------------
@@ -1268,15 +1294,18 @@ def api_submissions():
         offset = int(request.args.get("offset", "0"))
     except ValueError:
         limit, offset = 100, 0
+    limit = max(1, min(limit, 1000))
+    offset = max(0, offset)
 
-    # Optional filter by rep
     rep_filter = request.args.get("rep", "").strip()
+    q = request.args.get("q", "").strip()
 
     start = offset
     end = offset + limit - 1
 
     query = sb.table("applications").select(
-        "id, created_at, business_legal_name, industry, loan_amount, owners, payload, company_website, rep_name, rep_email"
+        "id, created_at, business_legal_name, industry, loan_amount, owners, payload, company_website, rep_name, rep_email",
+        count="exact",
     )
 
     if rep_filter:
@@ -1284,12 +1313,20 @@ def api_submissions():
         if rep_info:
             query = query.eq("rep_name", rep_info["name"])
 
+    if q:
+        # PostgREST `or` filter: escape commas/parens so user input can't break out of the expression.
+        safe = q.replace("\\", "\\\\").replace(",", "\\,").replace("(", "\\(").replace(")", "\\)")
+        pattern = f"*{safe}*"
+        query = query.or_(
+            f"business_legal_name.ilike.{pattern},industry.ilike.{pattern},rep_name.ilike.{pattern}"
+        )
+
     res = query.order("id", desc=True).range(start, end).execute()
     rows = res.data or []
     for r in rows:
         if r.get("loan_amount") is not None:
             r["loan_amount"] = float(r["loan_amount"])
-    return jsonify(rows)
+    return jsonify({"rows": rows, "total": res.count or 0})
 
 @app.route("/api/submissions/<int:sid>")
 @admin_required
@@ -1318,20 +1355,120 @@ def api_submission_detail(sid: int):
     app_row["files"] = files
     return jsonify(app_row)
 
-@app.route("/api/reps")
+_REP_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+def _validate_rep_payload(data: dict, *, require_code: bool) -> tuple[Optional[dict], Optional[str]]:
+    """Normalize and validate a rep create/edit payload. Returns (clean, error)."""
+    if not isinstance(data, dict):
+        return None, "Body must be a JSON object."
+    clean = {}
+    if require_code:
+        code = (data.get("code") or "").strip().lower()
+        if not _REP_CODE_RE.match(code):
+            return None, "Code must be lowercase alphanumeric (with -/_), 1–64 chars."
+        clean["code"] = code
+    if "name" in data:
+        name = (data.get("name") or "").strip()
+        if not name:
+            return None, "Name is required."
+        clean["name"] = name
+    elif require_code:
+        return None, "Name is required."
+    if "email" in data:
+        email = (data.get("email") or "").strip().lower()
+        if not _EMAIL_RE.match(email):
+            return None, "A valid email is required."
+        clean["email"] = email
+    elif require_code:
+        return None, "Email is required."
+    if "active" in data:
+        clean["active"] = bool(data["active"])
+    return clean, None
+
+@app.route("/api/csrf-token")
+@admin_required
+def api_csrf_token():
+    """Lets static admin pages (dashboard.html, rep-links.html) get a CSRF token for write requests."""
+    return jsonify({"token": generate_csrf()})
+
+@app.route("/api/reps", methods=["GET"])
 @admin_required
 def api_reps():
-    """List all sales reps with their unique links."""
+    """List sales reps with their unique links. Includes inactive by default for admin view."""
+    include_inactive = request.args.get("include_inactive", "1") != "0"
     base_url = request.host_url.rstrip("/")
-    reps_list = []
-    for code, info in SALES_REPS.items():
-        reps_list.append({
-            "code": code,
-            "name": info["name"],
-            "email": info["email"],
-            "link": f"{base_url}/?rep={code}"
-        })
-    return jsonify(reps_list)
+    reps = list(_get_reps_cached().values())
+    if not include_inactive:
+        reps = [r for r in reps if r.get("active", True)]
+    reps.sort(key=lambda r: (not r.get("active", True), r["code"]))
+    return jsonify([
+        {
+            "code": r["code"],
+            "name": r["name"],
+            "email": r["email"],
+            "active": r.get("active", True),
+            "link": f"{base_url}/?rep={r['code']}",
+        }
+        for r in reps
+    ])
+
+@app.route("/api/reps", methods=["POST"])
+@admin_required
+def api_reps_create():
+    clean, err = _validate_rep_payload(request.get_json(silent=True) or {}, require_code=True)
+    if err:
+        return jsonify({"error": err}), 400
+    existing = _get_reps_cached().get(clean["code"])
+    if existing:
+        return jsonify({"error": f"Rep code '{clean['code']}' already exists."}), 409
+    try:
+        sb.table("sales_reps").insert({
+            "code": clean["code"],
+            "name": clean["name"],
+            "email": clean["email"],
+            "active": clean.get("active", True),
+        }).execute()
+    except Exception as e:
+        log.warning("Rep insert failed: %s", e)
+        return jsonify({"error": "Failed to create rep."}), 500
+    _invalidate_rep_cache()
+    return jsonify({"ok": True, "code": clean["code"]}), 201
+
+@app.route("/api/reps/<code>", methods=["PATCH"])
+@admin_required
+def api_reps_update(code: str):
+    code = code.lower().strip()
+    if not _get_reps_cached().get(code):
+        return jsonify({"error": "Rep not found."}), 404
+    clean, err = _validate_rep_payload(request.get_json(silent=True) or {}, require_code=False)
+    if err:
+        return jsonify({"error": err}), 400
+    clean.pop("code", None)
+    if not clean:
+        return jsonify({"error": "No fields to update."}), 400
+    try:
+        sb.table("sales_reps").update(clean).eq("code", code).execute()
+    except Exception as e:
+        log.warning("Rep update failed: %s", e)
+        return jsonify({"error": "Failed to update rep."}), 500
+    _invalidate_rep_cache()
+    return jsonify({"ok": True})
+
+@app.route("/api/reps/<code>", methods=["DELETE"])
+@admin_required
+def api_reps_deactivate(code: str):
+    """Soft-delete: set active=false so historical submissions remain attributable."""
+    code = code.lower().strip()
+    if not _get_reps_cached().get(code):
+        return jsonify({"error": "Rep not found."}), 404
+    try:
+        sb.table("sales_reps").update({"active": False}).eq("code", code).execute()
+    except Exception as e:
+        log.warning("Rep deactivate failed: %s", e)
+        return jsonify({"error": "Failed to deactivate rep."}), 500
+    _invalidate_rep_cache()
+    return jsonify({"ok": True})
 
 # -------------------- Admin Login --------------------
 @app.route("/login", methods=["GET", "POST"])

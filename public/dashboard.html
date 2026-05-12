@@ -62,6 +62,27 @@
       outline: none;
       border-color: rgba(96,165,250,.5);
     }
+    .pager {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    }
+    .pager .info {
+      color: #94a3b8;
+      font-size: 13px;
+    }
+    .pager .controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pager button[disabled] {
+      opacity: .4;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 <body>
@@ -117,6 +138,14 @@
             <tbody></tbody>
           </table>
         </div>
+        <div class="pager">
+          <div class="info" id="pagerInfo">Loading…</div>
+          <div class="controls">
+            <button id="prevBtn" class="btn ghost" disabled>← Prev</button>
+            <span class="info" id="pageLabel">Page 1</span>
+            <button id="nextBtn" class="btn ghost" disabled>Next →</button>
+          </div>
+        </div>
       </div>
     </div>
   </main>
@@ -132,8 +161,16 @@
   </div>
 
 <script>
+  const PAGE_SIZE = 25;
+  let currentPage = 1;
+  let totalRows = 0;
+
   async function fetchData() {
-    const res = await fetch('/api/submissions');
+    const q = (document.getElementById('searchBox').value || '').trim();
+    const offset = (currentPage - 1) * PAGE_SIZE;
+    const params = new URLSearchParams({ limit: PAGE_SIZE, offset });
+    if (q) params.set('q', q);
+    const res = await fetch('/api/submissions?' + params.toString());
     return await res.json();
   }
 
@@ -151,19 +188,13 @@
   }
 
   function renderRows(data) {
-    const q = (document.getElementById('searchBox').value || '').toLowerCase();
+    const rows = (data && data.rows) || [];
+    totalRows = (data && data.total) || 0;
+
     const tbody = document.querySelector('#submissionsTable tbody');
     tbody.innerHTML = '';
 
-    data.filter(item => {
-      const hay = (
-        item.business_legal_name + ' ' +
-        item.industry + ' ' +
-        (item.owners || []).join(' ') + ' ' +
-        (item.rep_name || '')
-      ).toLowerCase();
-      return !q || hay.includes(q);
-    }).forEach(item => {
+    rows.forEach(item => {
       const tr = document.createElement('tr');
       const repHtml = item.rep_name
         ? `<span class="rep-badge">
@@ -187,6 +218,30 @@
       `;
       tbody.appendChild(tr);
     });
+
+    if (rows.length === 0) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td colspan="8" style="text-align:center;color:#94a3b8;padding:24px">No submissions found.</td>`;
+      tbody.appendChild(tr);
+    }
+
+    updatePager();
+  }
+
+  function updatePager() {
+    const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
+    if (currentPage > totalPages) currentPage = totalPages;
+    const start = totalRows === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+    const end = Math.min(currentPage * PAGE_SIZE, totalRows);
+    document.getElementById('pagerInfo').textContent =
+      totalRows === 0 ? 'No results' : `Showing ${start}–${end} of ${totalRows}`;
+    document.getElementById('pageLabel').textContent = `Page ${currentPage} of ${totalPages}`;
+    document.getElementById('prevBtn').disabled = currentPage <= 1;
+    document.getElementById('nextBtn').disabled = currentPage >= totalPages;
+  }
+
+  async function reload() {
+    renderRows(await fetchData());
   }
 
   async function showDetails(id) {
@@ -282,10 +337,33 @@
     m.setAttribute('aria-hidden', 'true');
   }
 
-  document.getElementById('refreshBtn').addEventListener('click', async () => renderRows(await fetchData()));
-  document.getElementById('searchBox').addEventListener('input', async () => renderRows(await fetchData()));
+  let searchTimer = null;
+  document.getElementById('searchBox').addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      currentPage = 1;
+      reload();
+    }, 300);
+  });
 
-  (async () => renderRows(await fetchData()))();
+  document.getElementById('refreshBtn').addEventListener('click', reload);
+
+  document.getElementById('prevBtn').addEventListener('click', () => {
+    if (currentPage > 1) {
+      currentPage -= 1;
+      reload();
+    }
+  });
+
+  document.getElementById('nextBtn').addEventListener('click', () => {
+    const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
+    if (currentPage < totalPages) {
+      currentPage += 1;
+      reload();
+    }
+  });
+
+  reload();
 
   window.closeModal = closeModal;
   window.showDetails = showDetails;
