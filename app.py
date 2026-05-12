@@ -350,7 +350,7 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
         ["Business Start Date", form_data.get("business_start_date", "")],
         ["EIN", form_data.get("ein", "")],
         ["Website", form_data.get("company_website", "")],
-        ["Phone", form_data.get("business_phone", "")],
+        ["Phone", _mask_mobile(form_data.get("business_phone", ""))],
         ["Requested Loan Amount", loan_display],
         ["Loan Purpose", form_data.get("loan_purpose", "")],
     ]
@@ -385,15 +385,14 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
     # Owner home address
     owner_addr = f"{form_data.get('owner_0_addr1', '')} {form_data.get('owner_0_addr2', '')}".strip()
     owner_city_state = f"{form_data.get('owner_0_city', '')}, {form_data.get('owner_0_state', '')} {form_data.get('owner_0_zip', '')}"
-    if owner_addr:
-        elements.append(Paragraph("Owner Home Address", section_style))
-        elements.append(_styled_section_table([
-            ["Street", owner_addr],
-            ["City / State / ZIP", owner_city_state],
-        ]))
+    elements.append(Paragraph("Owner Home Address", section_style))
+    elements.append(_styled_section_table([
+        ["Street", owner_addr],
+        ["City / State / ZIP", owner_city_state],
+    ]))
 
     # ── Second Owner (if present) ──
-    if form_data.get("has_owner_1") == "Yes":
+    if (form_data.get("has_owner_1") or "No").strip() == "Yes":
         elements.append(Paragraph("Second Owner", section_style))
         owner2_data = [
             ["Name", f"{form_data.get('owner_1_first', '')} {form_data.get('owner_1_last', '')}"],
@@ -406,6 +405,15 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
             ["MCA Balances", form_data.get("owner_1_mca_balances", "N/A")],
         ]
         elements.append(_styled_section_table(owner2_data))
+
+        # Second owner home address
+        owner1_addr = f"{form_data.get('owner_1_addr1', '')} {form_data.get('owner_1_addr2', '')}".strip()
+        owner1_city_state = f"{form_data.get('owner_1_city', '')}, {form_data.get('owner_1_state', '')} {form_data.get('owner_1_zip', '')}"
+        elements.append(Paragraph("Second Owner Home Address", section_style))
+        elements.append(_styled_section_table([
+            ["Street", owner1_addr],
+            ["City / State / ZIP", owner1_city_state],
+        ]))
 
     # ── Property Information ──
     elements.append(Paragraph("Property &amp; Location", section_style))
