@@ -354,6 +354,13 @@ tr:hover{background:rgba(255,255,255,.03)}
   border-radius:10px;
 }
 
+/* Multi-page wizard: hide non-active pages */
+.form-page{display:none}
+.form-page.active{display:block}
+
+/* Actions row: when there are both Back and Next, push them apart */
+.form-page .actions{justify-content:space-between}
+
 /* Progress Steps */
 .progress-steps{
   display:flex;
@@ -784,4 +791,305 @@ label.inline{
   .sig-pad-wrap canvas{
     height:150px;
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Interactive polish — animations, micro-interactions, ambient motion
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Honor user preference: skip animations for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Ambient floating orbs in the background ── */
+body::before, body::after {
+  content: '';
+  position: fixed;
+  pointer-events: none;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: .28;
+  z-index: -1;
+  will-change: transform;
+}
+body::before {
+  width: 520px; height: 520px;
+  background: radial-gradient(circle, #60a5fa 0%, transparent 70%);
+  top: -160px; left: -140px;
+  animation: orbDriftA 22s ease-in-out infinite;
+}
+body::after {
+  width: 580px; height: 580px;
+  background: radial-gradient(circle, #34d399 0%, transparent 70%);
+  bottom: -200px; right: -160px;
+  animation: orbDriftB 26s ease-in-out infinite;
+}
+@keyframes orbDriftA {
+  0%,100% { transform: translate(0,0) scale(1); }
+  33%     { transform: translate(60px, 80px) scale(1.08); }
+  66%     { transform: translate(-40px, 40px) scale(.95); }
+}
+@keyframes orbDriftB {
+  0%,100% { transform: translate(0,0) scale(1); }
+  50%     { transform: translate(-70px, -50px) scale(1.1); }
+}
+
+/* ── Page transitions (wizard) ── */
+@keyframes pageEnter {
+  0% { opacity: 0; transform: translateY(20px) scale(.98); filter: blur(4px); }
+  100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+.form-page.active {
+  display: block;
+  animation: pageEnter .55s cubic-bezier(.16,1,.3,1) both;
+}
+.form-page.active .section-title {
+  animation: fadeUp .55s .08s cubic-bezier(.16,1,.3,1) both;
+}
+.form-page.active .grid {
+  animation: fadeUp .55s .15s cubic-bezier(.16,1,.3,1) both;
+}
+.form-page.active > .actions {
+  animation: fadeUp .55s .22s cubic-bezier(.16,1,.3,1) both;
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Card mounts with a subtle scale-in (applies only on first paint) */
+.card { animation: cardMount .6s cubic-bezier(.16,1,.3,1) both; }
+@keyframes cardMount {
+  from { opacity: 0; transform: scale(.985) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ── Progress bar polish ── */
+.step {
+  position: relative;
+  transition: transform .25s cubic-bezier(.16,1,.3,1),
+              background .25s, border-color .25s, color .25s;
+}
+.step.active {
+  transform: translateY(-2px);
+}
+.step.active .step-num {
+  animation: stepPulse 2.4s ease-in-out infinite;
+}
+@keyframes stepPulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(96,165,250,.55); }
+  50%     { box-shadow: 0 0 0 10px rgba(96,165,250,0); }
+}
+
+/* Completed step: swap number for an animated checkmark */
+.step.completed .step-num {
+  position: relative;
+  color: transparent;
+  animation: stepCompletePop .45s cubic-bezier(.16,1,.3,1) both;
+}
+.step.completed .step-num::after {
+  content: "✓";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 900;
+  font-size: 13px;
+  animation: checkDraw .35s cubic-bezier(.16,1,.3,1) both;
+}
+@keyframes stepCompletePop {
+  0%   { transform: scale(1); }
+  60%  { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+@keyframes checkDraw {
+  0%   { transform: scale(0) rotate(-25deg); opacity: 0; }
+  60%  { transform: scale(1.25) rotate(0); opacity: 1; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+
+/* Connector fills with green when the step before it is completed */
+.step-connector {
+  position: relative;
+  overflow: hidden;
+}
+.step-connector::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, #34d399, #60a5fa);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform .5s cubic-bezier(.16,1,.3,1);
+}
+.step.completed + .step-connector::after { transform: scaleX(1); }
+
+/* ── Inputs: gentle lift on focus, success border once valid ── */
+input, select, textarea {
+  transition: border-color .2s, box-shadow .25s,
+              background .2s, transform .15s ease;
+}
+input:focus, select:focus, textarea:focus {
+  transform: translateY(-1px);
+}
+/* Subtle green check rail when a required field is filled + valid */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):required:valid:not(:placeholder-shown):not(:focus),
+select:required:valid:not(:focus) {
+  border-color: rgba(52,211,153,.45);
+  box-shadow: inset 3px 0 0 rgba(52,211,153,.5);
+}
+
+/* Field shake on validation report — fires when reportValidity opens the tooltip */
+input:invalid:focus, select:invalid:focus, textarea:invalid:focus {
+  animation: none; /* don't shake on every focus */
+}
+
+/* ── Buttons: shimmer sweep on hover, depth on press ── */
+.btn {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.btn.primary::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 30%, rgba(255,255,255,.22) 50%, transparent 70%);
+  transform: translateX(-110%);
+  transition: transform .65s cubic-bezier(.16,1,.3,1);
+  pointer-events: none;
+}
+.btn.primary:hover::after { transform: translateX(110%); }
+.btn.primary:hover {
+  box-shadow: 0 14px 36px rgba(37,99,235,.4),
+              0 0 0 1px rgba(255,255,255,.14) inset;
+}
+.btn.primary:active { transform: translateY(1px) scale(.99); }
+
+.btn.ghost {
+  transition: background .2s, border-color .2s, transform .15s;
+}
+.btn.ghost:hover {
+  background: rgba(148,163,184,.10);
+  border-color: rgba(148,163,184,.45);
+}
+.btn.ghost:active { transform: translateY(1px); }
+
+/* ── Uploader: more playful drag-over ── */
+.uploader {
+  position: relative;
+  transition: transform .25s cubic-bezier(.16,1,.3,1),
+              border-color .2s, background .25s, box-shadow .25s;
+}
+.uploader::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(96,165,250,.5), rgba(52,211,153,.5));
+  opacity: 0;
+  z-index: -1;
+  transition: opacity .3s;
+}
+.uploader.drag-over {
+  transform: scale(1.015);
+  border-style: solid;
+  border-color: transparent;
+  background: rgba(96,165,250,.08);
+}
+.uploader.drag-over::before { opacity: 1; }
+
+/* ── Section title: subtle dot pulse ── */
+.section-title .dot {
+  position: relative;
+}
+.section-title .dot::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: inherit;
+  opacity: .25;
+  animation: dotPulse 2.8s ease-in-out infinite;
+}
+@keyframes dotPulse {
+  0%,100% { transform: scale(1); opacity: .25; }
+  50%     { transform: scale(1.6); opacity: 0; }
+}
+
+/* ── Signature pad: inviting empty state ── */
+.sig-pad-wrap {
+  transition: border-color .25s, box-shadow .25s, transform .15s;
+}
+.sig-pad-wrap:hover:not(.signing) {
+  border-color: rgba(96,165,250,.5);
+}
+.sig-pad-wrap.has-sig {
+  box-shadow: 0 0 0 4px rgba(52,211,153,.15);
+}
+
+/* ── Card-header pill: subtle gradient sweep when active step ── */
+.pill {
+  transition: background .25s, border-color .25s, color .25s;
+}
+
+/* ── Success icon (done state) gets ripple rings ── */
+.success-icon {
+  position: relative;
+}
+.success-icon::before, .success-icon::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(52,211,153,.55);
+  animation: successRing 2.4s ease-out infinite;
+  pointer-events: none;
+}
+.success-icon::after { animation-delay: 1.2s; }
+@keyframes successRing {
+  0%   { transform: scale(1); opacity: .8; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* ── Confetti canvas (done state) ── */
+.confetti-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+/* ── Loading button shimmer (already exists, refine) ── */
+.btn.loading::after {
+  /* keep prior spinner overriding the shimmer sweep */
+  background: none;
+  transform: none;
+  transition: none;
+  border: 2px solid transparent;
+  border-top-color: white;
+  width: 18px; height: 18px;
+  top: 50%; left: 50%;
+  margin: -9px 0 0 -9px;
+  border-radius: 50%;
+  animation: spin .6s linear infinite;
+  position: absolute;
+  content: '';
+}
+
+/* ── Mobile tightening of new effects ── */
+@media (max-width: 900px) {
+  body::before { width: 320px; height: 320px; }
+  body::after  { width: 360px; height: 360px; }
+  .form-page.active { animation-duration: .4s; }
 }

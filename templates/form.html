@@ -55,32 +55,21 @@
 
 
   <main class="container">
-    <!-- Progress Steps -->
-    <div class="progress-steps">
-      <div class="step active" data-step="1">
-        <span class="step-num">1</span>
-        <span>Business Info</span>
-      </div>
+    <!-- Progress Steps (7 visible; submission silently fires after step 5) -->
+    <div class="progress-steps" id="progressSteps">
+      <div class="step active" data-step="1"><span class="step-num">1</span><span>Contact</span></div>
       <div class="step-connector"></div>
-      <div class="step" data-step="2">
-        <span class="step-num">2</span>
-        <span>Owner Details</span>
-      </div>
+      <div class="step" data-step="2"><span class="step-num">2</span><span>Business</span></div>
       <div class="step-connector"></div>
-      <div class="step" data-step="3">
-        <span class="step-num">3</span>
-        <span>Property</span>
-      </div>
+      <div class="step" data-step="3"><span class="step-num">3</span><span>Owner 1</span></div>
       <div class="step-connector"></div>
-      <div class="step" data-step="4">
-        <span class="step-num">4</span>
-        <span>Documents</span>
-      </div>
+      <div class="step" data-step="4"><span class="step-num">4</span><span>Owner 2</span></div>
       <div class="step-connector"></div>
-      <div class="step" data-step="5">
-        <span class="step-num">5</span>
-        <span>Submit</span>
-      </div>
+      <div class="step" data-step="5"><span class="step-num">5</span><span>Documents</span></div>
+      <div class="step-connector"></div>
+      <div class="step" data-step="6"><span class="step-num">6</span><span>Credit Setup</span></div>
+      <div class="step-connector"></div>
+      <div class="step" data-step="7"><span class="step-num">7</span><span>Credit Login</span></div>
     </div>
 
     {% if errors %}
@@ -101,240 +90,223 @@
 
     <!-- Form -->
     <form id="appForm"
-          class="card"
           action="{{ url_for('submit') }}"
           method="POST"
           enctype="multipart/form-data"
           autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-      <!-- Hidden rep tracking field (HMAC-signed to prevent tampering) -->
       {% if rep_code %}
       <input type="hidden" name="rep_code" value="{{ rep_code }}" />
       <input type="hidden" name="rep_sig" value="{{ rep_sig }}" />
       {% endif %}
 
-      <div class="card-header">
-        <h2>Applicant Details</h2>
-        {% if rep_info %}
-        <span class="pill" style="background: rgba(52, 211, 153, 0.15); border-color: rgba(52, 211, 153, 0.3); color: #34d399;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-            <circle cx="12" cy="7" r="4"/>
-          </svg>
-          Rep: {{ rep_info.name }}
-        </span>
-        {% else %}
-        <span class="pill">Draft</span>
-        {% endif %}
-      </div>
-
-      <div class="card-body">
-        <!-- Business Information -->
-        <div class="section-title"><span class="dot"></span><h3>Business Information</h3></div>
-        <div class="grid cols-2">
-          <div class="field">
-            <label>Business Legal Name</label>
-            <input name="business_legal_name"
-                   value="{{ (form.get('business_legal_name') if form else '') }}"
-                   required />
-          </div>
-          <div class="field">
-            <label>Business D/B/A Name</label>
-            <input name="business_dba"
-                   value="{{ (form.get('business_dba') if form else '') }}" />
-          </div>
-          <div class="field">
-            <label>Industry</label>
-            <input name="industry"
-                   placeholder="e.g., Home Construction"
-                   value="{{ (form.get('industry') if form else '') }}"
-                   required />
-          </div>
-          <div class="field">
-            <label>Legal Entity</label>
-            <select name="legal_entity" required>
-              <option value="">Select entity type</option>
-              <option value="Sole Proprietorship" {% if form and form.get('legal_entity')=='Sole Proprietorship' %}selected{% endif %}>Sole Proprietorship</option>
-              <option value="LLC" {% if form and form.get('legal_entity')=='LLC' %}selected{% endif %}>LLC</option>
-              <option value="Corporation (C)" {% if form and form.get('legal_entity')=='Corporation (C)' %}selected{% endif %}>Corporation (C)</option>
-              <option value="Corporation (S)" {% if form and form.get('legal_entity')=='Corporation (S)' %}selected{% endif %}>Corporation (S)</option>
-              <option value="Partnership" {% if form and form.get('legal_entity')=='Partnership' %}selected{% endif %}>Partnership</option>
-              <option value="Nonprofit" {% if form and form.get('legal_entity')=='Nonprofit' %}selected{% endif %}>Nonprofit</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Business Start Date</label>
-            <input type="date"
-                   name="business_start_date"
-                   value="{{ (form.get('business_start_date') if form else '') }}"
-                   required />
-          </div>
-          <div class="field">
-            <label>EIN</label>
-            <input name="ein"
-                   placeholder="123456789"
-                   value="{{ (form.get('ein') if form else '') }}"
-                   required
-                   autocomplete="off"
-                   inputmode="numeric" />
-          </div>
-
-          <!-- Added: Company Website -->
-          <div class="field">
-            <label>Company Website</label>
-            <input type="text"
-                   name="company_website"
-                   placeholder="example.com"
-                   value="{{ (form.get('company_website') if form else '') }}" />
-          </div>
+      <!-- ============== PAGE 1 — Contact Info ============== -->
+      <div class="form-page card active" data-page="1">
+        <div class="card-header">
+          <h2>Contact Information</h2>
+          {% if rep_info %}
+          <span class="pill" style="background: rgba(52, 211, 153, 0.15); border-color: rgba(52, 211, 153, 0.3); color: #34d399;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+            Rep: {{ rep_info.name }}
+          </span>
+          {% else %}
+          <span class="pill">Step 1 of 7</span>
+          {% endif %}
         </div>
-
-        <div class="grid cols-3" style="margin-top:12px">
-          <div class="field">
-            <label>Company Address</label>
-            <input name="company_address1"
-                   list="addr_suggestions"
-                   autocomplete="street-address"
-                   value="{{ (form.get('company_address1') if form else '') }}"
-                   required />
-          </div>
-          <div class="field">
-            <label>&nbsp;</label>
-            <input name="company_address2"
-                   placeholder="Suite / Apt"
-                   value="{{ (form.get('company_address2') if form else '') }}" />
-          </div>
-          <div class="field">
-            <label>City</label>
-            <input name="company_city"
-                   autocomplete="address-level2"
-                   value="{{ (form.get('company_city') if form else '') }}"
-                   required />
-          </div>
-          <div class="field">
-            <label>State</label>
-            {{ state_select('company_state', form.get('company_state') if form else '', required=True) }}
-          </div>
-          <div class="field">
-            <label>ZIP</label>
-            <input name="company_zip"
-                   autocomplete="postal-code"
-                   value="{{ (form.get('company_zip') if form else '') }}"
-                   required />
-          </div>
-          <div class="field">
-            <label>Country</label>
-            <input name="company_country"
-                   value="{{ (form.get('company_country') if form else 'United States') }}" />
-          </div>
-        </div>
-
-        <div class="grid cols-3" style="margin-top:12px">
-          <div class="field">
-            <label>Business Phone</label>
-            <input name="business_phone"
-                   value="{{ (form.get('business_phone') if form else '') }}" />
-          </div>
-          <div class="field">
-            <label>Requested Loan Amount</label>
-            <input type="number"
-                   name="loan_amount"
-                   min="0"
-                   step="100"
-                   value="{{ (form.get('loan_amount') if form else '') }}"
-                   required />
-          </div>
-          <div class="field">
-            <label>Loan Purpose</label>
-            <input name="loan_purpose"
-                   placeholder="e.g., Working capital, equipment"
-                   value="{{ (form.get('loan_purpose') if form else '') }}" />
-          </div>
-        </div>
-
-        <!-- Owner Information -->
-        <div class="section-title"><span class="dot"></span><h3>Owner Information</h3></div>
-        <div id="owners">
-          <div class="grid cols-3">
+        <div class="card-body">
+          <div class="section-title"><span class="dot"></span><h3>Your Details</h3></div>
+          <div class="grid cols-2">
             <div class="field">
-              <label>Owner First Name</label>
-              <input name="owner_0_first"
-                     value="{{ (form.get('owner_0_first') if form else '') }}"
-                     required />
+              <label>First Name</label>
+              <input name="owner_0_first" value="{{ (form.get('owner_0_first') if form else '') }}" required />
             </div>
             <div class="field">
-              <label>Owner Last Name</label>
-              <input name="owner_0_last"
-                     value="{{ (form.get('owner_0_last') if form else '') }}"
-                     required />
+              <label>Last Name</label>
+              <input name="owner_0_last" value="{{ (form.get('owner_0_last') if form else '') }}" required />
             </div>
             <div class="field">
-              <label>Ownership %</label>
-              <input type="number"
-                     name="owner_0_pct"
-                     min="0"
-                     max="100"
-                     step="0.1"
-                     value="{{ (form.get('owner_0_pct') if form else '') }}"
-                     required />
-            </div>
-          </div>
-
-          <div class="grid cols-3" style="margin-top:12px">
-            <div class="field">
-              <label>DOB</label>
-              <input type="date"
-                     name="owner_0_dob"
-                     value="{{ (form.get('owner_0_dob') if form else '') }}"
-                     required />
+              <label>Business Legal Name</label>
+              <input name="business_legal_name" value="{{ (form.get('business_legal_name') if form else '') }}" required />
             </div>
             <div class="field">
-              <label>SSN</label>
-              <input name="owner_0_ssn"
-                     placeholder="123456789"
-                     value="{{ (form.get('owner_0_ssn') if form else '') }}"
-                     required
-                     autocomplete="new-password"
-                     inputmode="numeric" />
+              <label>Business D/B/A (optional)</label>
+              <input name="business_dba" value="{{ (form.get('business_dba') if form else '') }}" />
             </div>
             <div class="field">
               <label>Email</label>
-              <input type="email"
-                     name="owner_0_email"
+              <input type="email" name="owner_0_email"
                      value="{{ (form.get('owner_0_email') if form else '') }}"
-                     required
-                     autocomplete="off" />
+                     required autocomplete="off" />
+            </div>
+            <div class="field">
+              <label>Cell Phone</label>
+              <input name="owner_0_mobile" placeholder="(555) 555-5555"
+                     value="{{ (form.get('owner_0_mobile') if form else '') }}" required />
+            </div>
+          </div>
+        </div>
+        <div class="actions">
+          <span></span>
+          <button type="button" class="btn primary" data-nav="next">Next</button>
+        </div>
+      </div>
+
+      <!-- ============== PAGE 2 — Business Details ============== -->
+      <div class="form-page card" data-page="2">
+        <div class="card-header">
+          <h2>Business Details</h2>
+          <span class="pill">Step 2 of 7</span>
+        </div>
+        <div class="card-body">
+          <div class="section-title"><span class="dot"></span><h3>Identity &amp; Formation</h3></div>
+          <div class="grid cols-3">
+            <div class="field">
+              <label>EIN</label>
+              <input name="ein" placeholder="12-3456789"
+                     value="{{ (form.get('ein') if form else '') }}"
+                     required autocomplete="off" inputmode="numeric" />
+            </div>
+            <div class="field">
+              <label>Business Start Date</label>
+              <input type="date" name="business_start_date"
+                     value="{{ (form.get('business_start_date') if form else '') }}" required />
+            </div>
+            <div class="field">
+              <label>Legal Entity</label>
+              <select name="legal_entity" required>
+                <option value="">Select entity type</option>
+                <option value="Sole Proprietorship" {% if form and form.get('legal_entity')=='Sole Proprietorship' %}selected{% endif %}>Sole Proprietorship</option>
+                <option value="LLC" {% if form and form.get('legal_entity')=='LLC' %}selected{% endif %}>LLC</option>
+                <option value="Corporation (C)" {% if form and form.get('legal_entity')=='Corporation (C)' %}selected{% endif %}>Corporation (C)</option>
+                <option value="Corporation (S)" {% if form and form.get('legal_entity')=='Corporation (S)' %}selected{% endif %}>Corporation (S)</option>
+                <option value="Partnership" {% if form and form.get('legal_entity')=='Partnership' %}selected{% endif %}>Partnership</option>
+                <option value="Nonprofit" {% if form and form.get('legal_entity')=='Nonprofit' %}selected{% endif %}>Nonprofit</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Industry</label>
+              <input name="industry" placeholder="e.g., Home Construction"
+                     value="{{ (form.get('industry') if form else '') }}" required />
+            </div>
+            <div class="field">
+              <label>Company Website</label>
+              <input type="text" name="company_website" placeholder="example.com"
+                     value="{{ (form.get('company_website') if form else '') }}" />
+            </div>
+            <div class="field">
+              <label>Business Phone</label>
+              <input name="business_phone"
+                     value="{{ (form.get('business_phone') if form else '') }}" />
             </div>
           </div>
 
-          <div class="grid cols-3" style="margin-top:12px">
+          <div class="section-title"><span class="dot"></span><h3>Company Address</h3></div>
+          <div class="grid cols-3">
             <div class="field">
-              <label>Mobile</label>
-              <input name="owner_0_mobile"
-                     placeholder="(555) 555-5555"
-                     value="{{ (form.get('owner_0_mobile') if form else '') }}"
-                     required />
-            </div>
-            <div class="field">
-              <label>Home Address</label>
-              <input name="owner_0_addr1"
-                     list="addr_suggestions"
-                     autocomplete="street-address"
-                     value="{{ (form.get('owner_0_addr1') if form else '') }}"
-                     required />
+              <label>Street</label>
+              <input name="company_address1" list="addr_suggestions" autocomplete="street-address"
+                     value="{{ (form.get('company_address1') if form else '') }}" required />
             </div>
             <div class="field">
               <label>&nbsp;</label>
-              <input name="owner_0_addr2"
-                     placeholder="Suite / Apt"
+              <input name="company_address2" placeholder="Suite / Apt"
+                     value="{{ (form.get('company_address2') if form else '') }}" />
+            </div>
+            <div class="field">
+              <label>City</label>
+              <input name="company_city" autocomplete="address-level2"
+                     value="{{ (form.get('company_city') if form else '') }}" required />
+            </div>
+            <div class="field">
+              <label>State</label>
+              {{ state_select('company_state', form.get('company_state') if form else '', required=True) }}
+            </div>
+            <div class="field">
+              <label>ZIP</label>
+              <input name="company_zip" autocomplete="postal-code"
+                     value="{{ (form.get('company_zip') if form else '') }}" required />
+            </div>
+            <div class="field">
+              <label>Country</label>
+              <input name="company_country"
+                     value="{{ (form.get('company_country') if form else 'United States') }}" />
+            </div>
+          </div>
+
+          <div class="section-title"><span class="dot"></span><h3>Loan &amp; Location</h3></div>
+          <div class="grid cols-3">
+            <div class="field">
+              <label>Requested Loan Amount</label>
+              <input type="number" name="loan_amount" min="0" step="100"
+                     value="{{ (form.get('loan_amount') if form else '') }}" required />
+            </div>
+            <div class="field">
+              <label>Loan Purpose</label>
+              <input name="loan_purpose" placeholder="e.g., Working capital, equipment"
+                     value="{{ (form.get('loan_purpose') if form else '') }}" />
+            </div>
+            <div class="field">
+              <label>Own Business Location?</label>
+              <select name="own_business_location" required>
+                <option value="">Select</option>
+                <option value="Own" {% if form and form.get('own_business_location')=='Own' %}selected{% endif %}>Own</option>
+                <option value="Rent" {% if form and form.get('own_business_location')=='Rent' %}selected{% endif %}>Rent</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn ghost" data-nav="prev">Back</button>
+          <button type="button" class="btn primary" data-nav="next">Next</button>
+        </div>
+      </div>
+
+      <!-- ============== PAGE 3 — Owner 1 Info ============== -->
+      <div class="form-page card" data-page="3">
+        <div class="card-header">
+          <h2>Owner 1 Information</h2>
+          <span class="pill">Step 3 of 7</span>
+        </div>
+        <div class="card-body">
+          <div class="section-title"><span class="dot"></span><h3>Personal &amp; Ownership</h3></div>
+          <div class="grid cols-3">
+            <div class="field">
+              <label>Ownership %</label>
+              <input type="number" name="owner_0_pct" min="0" max="100" step="0.1"
+                     value="{{ (form.get('owner_0_pct') if form else '') }}" required />
+            </div>
+            <div class="field">
+              <label>Date of Birth</label>
+              <input type="date" name="owner_0_dob"
+                     value="{{ (form.get('owner_0_dob') if form else '') }}" required />
+            </div>
+            <div class="field">
+              <label>SSN</label>
+              <input name="owner_0_ssn" placeholder="123-45-6789"
+                     value="{{ (form.get('owner_0_ssn') if form else '') }}"
+                     required autocomplete="new-password" inputmode="numeric" />
+            </div>
+          </div>
+
+          <div class="section-title"><span class="dot"></span><h3>Home Address</h3></div>
+          <div class="grid cols-3">
+            <div class="field">
+              <label>Street</label>
+              <input name="owner_0_addr1" list="addr_suggestions" autocomplete="street-address"
+                     value="{{ (form.get('owner_0_addr1') if form else '') }}" required />
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <input name="owner_0_addr2" placeholder="Suite / Apt"
                      value="{{ (form.get('owner_0_addr2') if form else '') }}" />
             </div>
             <div class="field">
               <label>City</label>
-              <input name="owner_0_city"
-                     autocomplete="address-level2"
-                     value="{{ (form.get('owner_0_city') if form else '') }}"
-                     required />
+              <input name="owner_0_city" autocomplete="address-level2"
+                     value="{{ (form.get('owner_0_city') if form else '') }}" required />
             </div>
             <div class="field">
               <label>State</label>
@@ -342,10 +314,8 @@
             </div>
             <div class="field">
               <label>ZIP</label>
-              <input name="owner_0_zip"
-                     autocomplete="postal-code"
-                     value="{{ (form.get('owner_0_zip') if form else '') }}"
-                     required />
+              <input name="owner_0_zip" autocomplete="postal-code"
+                     value="{{ (form.get('owner_0_zip') if form else '') }}" required />
             </div>
             <div class="field">
               <label>Country</label>
@@ -354,32 +324,82 @@
             </div>
           </div>
 
-          <!-- Added: Owner 0 FICO + MCA Balances -->
-          <div class="grid cols-3" style="margin-top:12px">
+          <div class="section-title"><span class="dot"></span><h3>Credit (optional)</h3></div>
+          <div class="grid cols-3">
             <div class="field">
               <label>FICO</label>
-              <input type="number"
-                     name="owner_0_fico"
-                     min="300"
-                     max="850"
+              <input type="number" name="owner_0_fico" min="300" max="850"
                      value="{{ (form.get('owner_0_fico') if form else '') }}" />
             </div>
             <div class="field">
               <label>MCA Balances</label>
-              <input name="owner_0_mca_balances"
-                     placeholder="If any, describe balances or total"
+              <input name="owner_0_mca_balances" placeholder="If any, describe balances or total"
                      value="{{ (form.get('owner_0_mca_balances') if form else '') }}" />
             </div>
+            <div class="field"><label>&nbsp;</label><div class="helper" style="opacity:.7;font-size:.9rem;margin-top:10px;">Optional</div></div>
+          </div>
+
+          <div class="section-title"><span class="dot"></span><h3>Property</h3></div>
+          <div class="grid cols-2">
             <div class="field">
-              <label>&nbsp;</label>
-              <div class="helper" style="opacity:.7;font-size:.9rem;margin-top:10px;">
-                Optional
-              </div>
+              <label>Own Real Estate?</label>
+              <select name="own_real_estate" required>
+                <option value="">Select</option>
+                <option value="Yes" {% if form and form.get('own_real_estate')=='Yes' %}selected{% endif %}>Yes</option>
+                <option value="No" {% if form and form.get('own_real_estate')=='No' %}selected{% endif %}>No</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Own Home Location?</label>
+              <select name="own_home_location" required>
+                <option value="">Select</option>
+                <option value="Own" {% if form and form.get('own_home_location')=='Own' %}selected{% endif %}>Own</option>
+                <option value="Rent" {% if form and form.get('own_home_location')=='Rent' %}selected{% endif %}>Rent</option>
+              </select>
             </div>
           </div>
 
-          <!-- Added: Add Owner toggle -->
-          <div class="grid cols-3" style="margin-top:16px">
+          <div class="section-title"><span class="dot"></span><h3>Owner 1 Signature</h3></div>
+          <div class="signature-section">
+            <div class="grid cols-2" style="gap:20px;align-items:start;">
+              <div class="field">
+                <label>Sign Below <span style="color:var(--danger);">*</span></label>
+                <div class="sig-pad-wrap">
+                  <canvas id="signatureCanvas" width="480" height="180"></canvas>
+                  <button type="button" id="clearSigBtn" class="btn-clear-sig" title="Clear signature">Clear</button>
+                </div>
+                <input type="hidden" name="signature_data" id="signatureData" required />
+                <p class="sig-hint">Use your mouse or finger to sign above</p>
+              </div>
+              <div class="field">
+                <label>Date of Signature <span style="color:var(--danger);">*</span></label>
+                <input type="date" name="signature_date" id="signatureDate"
+                       value="{{ (form.get('signature_date') if form else '') }}" required />
+                <div style="margin-top:16px;">
+                  <label>Print Name <span style="color:var(--danger);">*</span></label>
+                  <input name="signature_print_name"
+                         placeholder="Full legal name"
+                         value="{{ (form.get('signature_print_name') if form else '') }}" required />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn ghost" data-nav="prev">Back</button>
+          <button type="button" class="btn primary" data-nav="next">Next</button>
+        </div>
+      </div>
+
+      <!-- ============== PAGE 4 — Owner 2 (Optional) ============== -->
+      <div class="form-page card" data-page="4">
+        <div class="card-header">
+          <h2>Owner 2 Information</h2>
+          <span class="pill">Step 4 of 7 — Optional</span>
+        </div>
+        <div class="card-body">
+          <div class="section-title"><span class="dot"></span><h3>Add a Second Owner?</h3></div>
+          <div class="grid cols-3">
             <div class="field">
               <label>Add Owner</label>
               <select name="has_owner_1" id="has_owner_1">
@@ -387,128 +407,72 @@
                 <option value="Yes" {% if form and form.get('has_owner_1')=='Yes' %}selected{% endif %}>Yes</option>
               </select>
             </div>
+            <div class="field" style="grid-column:span 2;">
+              <label>&nbsp;</label>
+              <div class="helper" style="opacity:.75;font-size:.9rem;margin-top:10px;">
+                Choose <strong>No</strong> if this business has a single owner — you can move on to the next step.
+              </div>
+            </div>
           </div>
 
-          <!-- Added: Second Owner section -->
-          <div id="owner1Section" style="display:none; margin-top:14px;">
-            <div class="section-title"><span class="dot"></span><h3>Second Owner</h3></div>
-
+          <div id="owner1Section" style="display:none;">
+            <div class="section-title"><span class="dot"></span><h3>Owner 2 — Personal &amp; Ownership</h3></div>
             <div class="grid cols-3">
-              <div class="field">
-                <label>Owner First Name</label>
-                <input name="owner_1_first"
-                       value="{{ (form.get('owner_1_first') if form else '') }}" />
-              </div>
-              <div class="field">
-                <label>Owner Last Name</label>
-                <input name="owner_1_last"
-                       value="{{ (form.get('owner_1_last') if form else '') }}" />
-              </div>
-              <div class="field">
-                <label>Ownership %</label>
-                <input type="number"
-                       name="owner_1_pct"
-                       min="0"
-                       max="100"
-                       step="0.1"
-                       value="{{ (form.get('owner_1_pct') if form else '') }}" />
-              </div>
-            </div>
-
-            <div class="grid cols-3" style="margin-top:12px">
-              <div class="field">
-                <label>DOB</label>
-                <input type="date"
-                       name="owner_1_dob"
-                       value="{{ (form.get('owner_1_dob') if form else '') }}" />
-              </div>
-              <div class="field">
-                <label>SSN</label>
-                <input name="owner_1_ssn"
-                       placeholder="123456789"
+              <div class="field"><label>First Name</label>
+                <input name="owner_1_first" value="{{ (form.get('owner_1_first') if form else '') }}" /></div>
+              <div class="field"><label>Last Name</label>
+                <input name="owner_1_last" value="{{ (form.get('owner_1_last') if form else '') }}" /></div>
+              <div class="field"><label>Ownership %</label>
+                <input type="number" name="owner_1_pct" min="0" max="100" step="0.1"
+                       value="{{ (form.get('owner_1_pct') if form else '') }}" /></div>
+              <div class="field"><label>Date of Birth</label>
+                <input type="date" name="owner_1_dob" value="{{ (form.get('owner_1_dob') if form else '') }}" /></div>
+              <div class="field"><label>SSN</label>
+                <input name="owner_1_ssn" placeholder="123-45-6789"
                        value="{{ (form.get('owner_1_ssn') if form else '') }}"
-                       autocomplete="new-password"
-                       inputmode="numeric" />
-              </div>
-              <div class="field">
-                <label>Email</label>
-                <input type="email"
-                       name="owner_1_email"
-                       value="{{ (form.get('owner_1_email') if form else '') }}"
-                       autocomplete="off" />
-              </div>
+                       autocomplete="new-password" inputmode="numeric" /></div>
+              <div class="field"><label>Email</label>
+                <input type="email" name="owner_1_email"
+                       value="{{ (form.get('owner_1_email') if form else '') }}" autocomplete="off" /></div>
+              <div class="field"><label>Mobile</label>
+                <input name="owner_1_mobile" placeholder="(555) 555-5555"
+                       value="{{ (form.get('owner_1_mobile') if form else '') }}" /></div>
             </div>
 
-            <div class="grid cols-3" style="margin-top:12px">
-              <div class="field">
-                <label>Mobile</label>
-                <input name="owner_1_mobile"
-                       placeholder="(555) 555-5555"
-                       value="{{ (form.get('owner_1_mobile') if form else '') }}" />
-              </div>
-              <div class="field">
-                <label>Home Address</label>
-                <input name="owner_1_addr1"
-                       list="addr_suggestions"
-                       autocomplete="street-address"
-                       value="{{ (form.get('owner_1_addr1') if form else '') }}" />
-              </div>
-              <div class="field">
-                <label>&nbsp;</label>
-                <input name="owner_1_addr2"
-                       placeholder="Suite / Apt"
-                       value="{{ (form.get('owner_1_addr2') if form else '') }}" />
-              </div>
-
-              <div class="field">
-                <label>City</label>
-                <input name="owner_1_city"
-                       autocomplete="address-level2"
-                       value="{{ (form.get('owner_1_city') if form else '') }}" />
-              </div>
-              <div class="field">
-                <label>State</label>
-                {{ state_select('owner_1_state', form.get('owner_1_state') if form else '') }}
-              </div>
-              <div class="field">
-                <label>ZIP</label>
-                <input name="owner_1_zip"
-                       autocomplete="postal-code"
-                       value="{{ (form.get('owner_1_zip') if form else '') }}" />
-              </div>
-
-              <div class="field">
-                <label>Country</label>
-                <input name="owner_1_country"
-                       value="{{ (form.get('owner_1_country') if form else 'United States') }}" />
-              </div>
+            <div class="section-title"><span class="dot"></span><h3>Owner 2 — Home Address</h3></div>
+            <div class="grid cols-3">
+              <div class="field"><label>Street</label>
+                <input name="owner_1_addr1" list="addr_suggestions" autocomplete="street-address"
+                       value="{{ (form.get('owner_1_addr1') if form else '') }}" /></div>
+              <div class="field"><label>&nbsp;</label>
+                <input name="owner_1_addr2" placeholder="Suite / Apt"
+                       value="{{ (form.get('owner_1_addr2') if form else '') }}" /></div>
+              <div class="field"><label>City</label>
+                <input name="owner_1_city" autocomplete="address-level2"
+                       value="{{ (form.get('owner_1_city') if form else '') }}" /></div>
+              <div class="field"><label>State</label>
+                {{ state_select('owner_1_state', form.get('owner_1_state') if form else '') }}</div>
+              <div class="field"><label>ZIP</label>
+                <input name="owner_1_zip" autocomplete="postal-code"
+                       value="{{ (form.get('owner_1_zip') if form else '') }}" /></div>
+              <div class="field"><label>Country</label>
+                <input name="owner_1_country" value="{{ (form.get('owner_1_country') if form else 'United States') }}" /></div>
             </div>
 
-            <div class="grid cols-3" style="margin-top:12px">
-              <div class="field">
-                <label>FICO</label>
-                <input type="number"
-                       name="owner_1_fico"
-                       min="300"
-                       max="850"
-                       value="{{ (form.get('owner_1_fico') if form else '') }}" />
-              </div>
-              <div class="field">
-                <label>MCA Balances</label>
-                <input name="owner_1_mca_balances"
-                       placeholder="If any, describe balances or total"
-                       value="{{ (form.get('owner_1_mca_balances') if form else '') }}" />
-              </div>
-              <div class="field">
-                <label>&nbsp;</label>
-                <div class="helper" style="opacity:.7;font-size:.9rem;margin-top:10px;">
-                  Optional
-                </div>
-              </div>
+            <div class="section-title"><span class="dot"></span><h3>Owner 2 — Credit (optional)</h3></div>
+            <div class="grid cols-3">
+              <div class="field"><label>FICO</label>
+                <input type="number" name="owner_1_fico" min="300" max="850"
+                       value="{{ (form.get('owner_1_fico') if form else '') }}" /></div>
+              <div class="field"><label>MCA Balances</label>
+                <input name="owner_1_mca_balances" placeholder="If any, describe balances or total"
+                       value="{{ (form.get('owner_1_mca_balances') if form else '') }}" /></div>
+              <div class="field"><label>&nbsp;</label>
+                <div class="helper" style="opacity:.7;font-size:.9rem;margin-top:10px;">Optional</div></div>
             </div>
 
-            <!-- Second Owner Signature -->
-            <div class="signature-section" style="margin-top:18px;">
+            <div class="section-title"><span class="dot"></span><h3>Owner 2 Signature</h3></div>
+            <div class="signature-section">
               <div class="grid cols-2" style="gap:20px;align-items:start;">
                 <div class="field">
                   <label>Sign Below <span style="color:var(--danger);">*</span></label>
@@ -521,14 +485,11 @@
                 </div>
                 <div class="field">
                   <label>Date of Signature <span style="color:var(--danger);">*</span></label>
-                  <input type="date"
-                         name="owner_1_signature_date"
-                         id="signatureDate1"
+                  <input type="date" name="owner_1_signature_date" id="signatureDate1"
                          value="{{ (form.get('owner_1_signature_date') if form else '') }}" />
                   <div style="margin-top:16px;">
                     <label>Print Name <span style="color:var(--danger);">*</span></label>
-                    <input name="owner_1_signature_print_name"
-                           id="signaturePrintName1"
+                    <input name="owner_1_signature_print_name" id="signaturePrintName1"
                            placeholder="Full legal name"
                            value="{{ (form.get('owner_1_signature_print_name') if form else '') }}" />
                   </div>
@@ -537,126 +498,226 @@
             </div>
           </div>
         </div>
-
-        <!-- Property and Location -->
-        <div class="section-title"><span class="dot"></span><h3>Property and Location</h3></div>
-
-        <div class="grid cols-3">
-          <div class="field">
-            <label>Own Real Estate?</label>
-            <select name="own_real_estate" required>
-              <option value="">Select</option>
-              <option value="Yes" {% if form and form.get('own_real_estate')=='Yes' %}selected{% endif %}>Yes</option>
-              <option value="No" {% if form and form.get('own_real_estate')=='No' %}selected{% endif %}>No</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Own Home Location?</label>
-            <select name="own_home_location" required>
-              <option value="">Select</option>
-              <option value="Own" {% if form and form.get('own_home_location')=='Own' %}selected{% endif %}>Own</option>
-              <option value="Rent" {% if form and form.get('own_home_location')=='Rent' %}selected{% endif %}>Rent</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Own Business Location?</label>
-            <select name="own_business_location" required>
-              <option value="">Select</option>
-              <option value="Own" {% if form and form.get('own_business_location')=='Own' %}selected{% endif %}>Own</option>
-              <option value="Rent" {% if form and form.get('own_business_location')=='Rent' %}selected{% endif %}>Rent</option>
-            </select>
-          </div>
-        </div>
-
-
-
-        <!-- Authorization + Hand Signature -->
-        <div class="section-title" style="margin-top:18px">
-          <span class="dot"></span><h3>Authorization &amp; Signature</h3>
-        </div>
-
-        <div class="card" style="margin: 12px 0; padding: 14px;">
-          <p style="margin:0; font-size:.95rem; line-height:1.45;">
-            By submitting this application, you authorize the lender and its partners to contact you at the telephone,
-            cell phone, email, or direct mail contact data provided in this form for purposes of fulfilling this inquiry
-            about business financing, even if you have previously indicated a preference of "do not call" or "do not email"
-            with a government registry. You also authorize the lender and its representatives, successors, assigns, and
-            designees to obtain consumer and/or personal, business and investigative reports and other information about you
-            from consumer reporting agencies and other third parties. You consent to the release of any information relating
-            to you to the lender on its behalf. By providing your cell phone number, you consent to the receipt of text
-            messages knowing that message and data rates may apply. Reply STOP to unsubscribe, HELP for help. Message
-            frequency varies. You certify that all the information contained herein is complete, true, and accurate.
-          </p>
-
-          <label class="inline" style="align-items:flex-start; gap:10px; margin-top:12px;">
-            <input type="checkbox"
-                   name="esign_consent"
-                   value="Yes"
-                   required
-                   {% if form and form.get('esign_consent')=='Yes' %}checked{% endif %} />
-            <span>I agree and provide my electronic signature.</span>
-          </label>
-
-          <label class="inline" style="align-items:flex-start; gap:10px; margin-top:10px;">
-            <input type="checkbox"
-                   name="esign_act_consent"
-                   value="Yes"
-                   required
-                   {% if form and form.get('esign_act_consent')=='Yes' %}checked{% endif %} />
-            <span>I agree to the terms and conditions — I agree that the electronic digitized signature I apply on
-            this document is a representation of my signature and is legally valid and binding as if I had signed the
-            document with ink on paper in accordance with the Uniform Electronic Transactions Act (UETA) and the
-            Electronic Signatures in Global and National Commerce Act (E-SIGN) of 2000.</span>
-          </label>
-        </div>
-
-        <!-- Signature Pad -->
-        <div class="signature-section">
-          <div class="grid cols-2" style="gap:20px;align-items:start;">
-            <div class="field">
-              <label>Sign Below <span style="color:var(--danger);">*</span></label>
-              <div class="sig-pad-wrap">
-                <canvas id="signatureCanvas" width="480" height="180"></canvas>
-                <button type="button" id="clearSigBtn" class="btn-clear-sig" title="Clear signature">Clear</button>
-              </div>
-              <input type="hidden" name="signature_data" id="signatureData" required />
-              <p class="sig-hint">Use your mouse or finger to sign above</p>
-            </div>
-            <div class="field">
-              <label>Date of Signature <span style="color:var(--danger);">*</span></label>
-              <input type="date"
-                     name="signature_date"
-                     id="signatureDate"
-                     value="{{ (form.get('signature_date') if form else '') }}"
-                     required />
-              <div style="margin-top:16px;">
-                <label>Print Name <span style="color:var(--danger);">*</span></label>
-                <input name="signature_print_name"
-                       placeholder="Full legal name"
-                       value="{{ (form.get('signature_print_name') if form else '') }}"
-                       required />
-              </div>
-            </div>
-          </div>
+        <div class="actions">
+          <button type="button" class="btn ghost" data-nav="prev">Back</button>
+          <button type="button" class="btn primary" data-nav="next">Next</button>
         </div>
       </div>
 
-      <div class="actions">
-        <button type="submit" class="btn primary" id="submitBtn">
-          <span>Submit Application</span>
-        </button>
+      <!-- ============== PAGE 5 — Documents + Authorization + Submit ============== -->
+      <div class="form-page card" data-page="5">
+        <div class="card-header">
+          <h2>Documents &amp; Authorization</h2>
+          <span class="pill">Step 5 of 7</span>
+        </div>
+        <div class="card-body">
+          <div class="section-title"><span class="dot"></span><h3>Supporting Documents (optional)</h3></div>
+          <p style="margin:0 0 16px;color:var(--muted);font-size:14px;line-height:1.5;">
+            Attaching these files now speeds up review. You can also skip and email them later — your application will still submit.
+          </p>
+
+          <div class="field" style="margin-bottom:16px;">
+            <label>4 Months Business Bank Statements (PDF)</label>
+            <div class="uploader" id="bank-uploader" style="padding:16px;">
+              <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Add PDFs one at a time or all at once — drag &amp; drop works too.</p>
+              <input type="file" id="bank-files-input" name="bank_files" accept="application/pdf" multiple />
+              <div id="bank-files-list" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center;"></div>
+            </div>
+          </div>
+
+          <div class="grid cols-2">
+            <div class="field">
+              <label>Driver's License (optional)</label>
+              <div class="uploader" style="padding:16px;">
+                <input type="file" name="id_doc" accept="application/pdf,image/*" />
+              </div>
+            </div>
+            <div class="field">
+              <label>Voided Check (optional)</label>
+              <div class="uploader" style="padding:16px;">
+                <input type="file" name="voided_check" accept="application/pdf,image/*" />
+              </div>
+            </div>
+          </div>
+
+          <div class="section-title" style="margin-top:24px"><span class="dot"></span><h3>Authorization</h3></div>
+          <div class="card" style="margin:12px 0;padding:14px;">
+            <p style="margin:0;font-size:.95rem;line-height:1.45;">
+              By submitting this application, you authorize the lender and its partners to contact you at the telephone,
+              cell phone, email, or direct mail contact data provided in this form for purposes of fulfilling this inquiry
+              about business financing, even if you have previously indicated a preference of "do not call" or "do not email"
+              with a government registry. You also authorize the lender and its representatives, successors, assigns, and
+              designees to obtain consumer and/or personal, business and investigative reports and other information about you
+              from consumer reporting agencies and other third parties. You consent to the release of any information relating
+              to you to the lender on its behalf. By providing your cell phone number, you consent to the receipt of text
+              messages knowing that message and data rates may apply. Reply STOP to unsubscribe, HELP for help. Message
+              frequency varies. You certify that all the information contained herein is complete, true, and accurate.
+            </p>
+
+            <label class="inline" style="align-items:flex-start; gap:10px; margin-top:12px;">
+              <input type="checkbox" name="esign_consent" value="Yes" required
+                     {% if form and form.get('esign_consent')=='Yes' %}checked{% endif %} />
+              <span>I agree and provide my electronic signature.</span>
+            </label>
+
+            <label class="inline" style="align-items:flex-start; gap:10px; margin-top:10px;">
+              <input type="checkbox" name="esign_act_consent" value="Yes" required
+                     {% if form and form.get('esign_act_consent')=='Yes' %}checked{% endif %} />
+              <span>I agree to the terms and conditions — I agree that the electronic digitized signature I apply on
+              this document is a representation of my signature and is legally valid and binding as if I had signed the
+              document with ink on paper in accordance with the Uniform Electronic Transactions Act (UETA) and the
+              Electronic Signatures in Global and National Commerce Act (E-SIGN) of 2000.</span>
+            </label>
+          </div>
+
+          <p style="margin:14px 0 0;color:var(--muted);font-size:13px;line-height:1.5;">
+            Next, we'll walk you through linking a credit account so we can run a
+            <strong>soft credit pull</strong> (no score impact).
+          </p>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn ghost" data-nav="prev">Back</button>
+          <button type="submit" class="btn primary" id="submitBtn">
+            <span>Next</span>
+          </button>
+        </div>
       </div>
     </form>
 
     <datalist id="addr_suggestions"></datalist>
   </main>
 
-  <!-- Your script file if you have other logic -->
   <script src="{{ url_for('static', filename='form.js') }}"></script>
 
-  <!-- Toggle and refresh logic -->
   <script>
-    // Toggle Second Owner section
+    // ── Multi-page navigation ──
+    (function () {
+      const form = document.getElementById('appForm');
+      if (!form) return;
+      const pages = Array.from(form.querySelectorAll('.form-page'));
+      const stepEls = Array.from(document.querySelectorAll('#progressSteps .step'));
+      const totalPages = pages.length;
+      let current = 1;
+
+      function pageByNum(n) { return pages.find(p => Number(p.dataset.page) === n); }
+
+      function updateProgress(n) {
+        stepEls.forEach(el => {
+          const num = Number(el.dataset.step);
+          el.classList.remove('active', 'completed');
+          if (num < n) el.classList.add('completed');
+          else if (num === n) el.classList.add('active');
+        });
+      }
+
+      function show(n) {
+        pages.forEach(p => p.classList.toggle('active', Number(p.dataset.page) === n));
+        current = n;
+        updateProgress(n);
+        // Scroll progress bar / page top into view
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+
+        // Re-measure signature canvases when their page becomes visible —
+        // a 0×0 canvas captured while display:none would otherwise persist.
+        if (n === 3 && window.__primarySignaturePad) window.__primarySignaturePad.rescale();
+        if (n === 4 && window.__owner1SignaturePad) {
+          const owner1Sel = document.getElementById('has_owner_1');
+          if (owner1Sel && owner1Sel.value === 'Yes') window.__owner1SignaturePad.rescale();
+        }
+      }
+
+      function validateCurrentPage() {
+        const page = pageByNum(current);
+        if (!page) return true;
+        const fields = page.querySelectorAll('input, select, textarea');
+        let firstInvalid = null;
+        for (const el of fields) {
+          if (el.disabled || el.type === 'hidden') continue;
+          if (!el.checkValidity()) {
+            if (!firstInvalid) firstInvalid = el;
+          }
+        }
+        if (firstInvalid) {
+          firstInvalid.reportValidity();
+          firstInvalid.focus();
+          return false;
+        }
+        // Owner-1 signature gate on page 3
+        if (current === 3) {
+          const sig = window.__primarySignaturePad;
+          if (sig && !sig.isSigned()) {
+            alert('Please sign the application before continuing.');
+            sig.canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return false;
+          }
+        }
+        // Owner-2 signature gate on page 4 (only if "Yes")
+        if (current === 4) {
+          const toggle = document.getElementById('has_owner_1');
+          if (toggle && toggle.value === 'Yes') {
+            const sig2 = window.__owner1SignaturePad;
+            if (sig2 && !sig2.isSigned()) {
+              alert('Please have the second owner sign the application before continuing.');
+              sig2.canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              return false;
+            }
+          }
+        }
+        return true;
+      }
+
+      form.addEventListener('click', function (e) {
+        const btn = e.target.closest('[data-nav]');
+        if (!btn) return;
+        e.preventDefault();
+        const dir = btn.dataset.nav;
+        if (dir === 'next') {
+          if (!validateCurrentPage()) return;
+          if (current < totalPages) show(current + 1);
+        } else if (dir === 'prev') {
+          if (current > 1) show(current - 1);
+        }
+      });
+
+      // Final submit safety: ensure required pads are signed even if user
+      // somehow bypasses page validation (e.g. browser back/forward).
+      form.addEventListener('submit', function (e) {
+        const primary = window.__primarySignaturePad;
+        if (primary && !primary.isSigned()) {
+          e.preventDefault();
+          alert('Please sign the application before submitting.');
+          show(3);
+          return false;
+        }
+        const toggle = document.getElementById('has_owner_1');
+        const secondary = window.__owner1SignaturePad;
+        if (toggle && toggle.value === 'Yes' && secondary && !secondary.isSigned()) {
+          e.preventDefault();
+          alert('Please have the second owner sign the application before submitting.');
+          show(4);
+          return false;
+        }
+      });
+
+      // If we re-rendered with server-side errors, jump to the first page that
+      // contains a field with an error so the user can fix it.
+      {% if errors %}
+      (function jumpToErrorPage() {
+        const errorFields = {{ errors.keys()|list|tojson }};
+        for (const name of errorFields) {
+          const el = form.querySelector('[name="' + name + '"]');
+          if (!el) continue;
+          const page = el.closest('.form-page');
+          if (page) { show(Number(page.dataset.page)); return; }
+        }
+      })();
+      {% endif %}
+
+      // Expose so signature-pad init can call back
+      window.__wizard = { show };
+    })();
+
+    // ── Owner 2 toggle ──
     (function () {
       const sel = document.getElementById('has_owner_1');
       const sec = document.getElementById('owner1Section');
@@ -678,8 +739,6 @@
           if (!show) {
             pad.clear();
           } else {
-            // Section just became visible — re-measure the canvas now that
-            // it has real CSS dimensions (it was 0×0 while display:none).
             pad.rescale();
             if (pad.dateInput && !pad.dateInput.value) {
               const now = new Date();
@@ -693,23 +752,17 @@
       }
 
       sel.addEventListener('change', updateOwner1);
-
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', updateOwner1);
       } else {
         updateOwner1();
       }
-
-      window.addEventListener('pageshow', function (e) {
-        if (e.persisted) updateOwner1();
-      });
     })();
 
-    // Clear form on refresh and back/forward unless rendering validation errors
+    // ── Clear form on browser refresh / back-forward (unless server returned errors) ──
     (function () {
       const form = document.getElementById('appForm');
       if (!form) return;
-
       const hasErrors = {{ 'true' if errors else 'false' }};
 
       function shouldResetOnLoad() {
@@ -726,14 +779,8 @@
       window.addEventListener('pageshow', function (e) {
         if (!hasErrors && e.persisted) form.reset();
       });
-
-      if (shouldResetOnLoad()) {
-        form.reset();
-      }
-
-      window.addEventListener('beforeunload', function () {
-        try { form.reset(); } catch (_) {}
-      });
+      if (shouldResetOnLoad()) form.reset();
+      window.addEventListener('beforeunload', function () { try { form.reset(); } catch (_) {} });
     })();
 
     // ── Signature Pads ──
@@ -751,9 +798,6 @@
         let hasSigned = false;
 
         function scaleCanvas() {
-          // Clear any inline dimensions from a prior call so the CSS-driven
-          // size (width:100%, height:180px) takes effect — otherwise a 0×0
-          // measurement taken while the section was hidden would persist.
           canvas.style.width = '';
           canvas.style.height = '';
           const rect = canvas.getBoundingClientRect();
@@ -795,39 +839,16 @@
           const touch = e.touches ? e.touches[0] : e;
           return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
         }
-        function startDraw(e) {
-          e.preventDefault();
-          drawing = true;
-          if (wrap) wrap.classList.add('signing');
-          const pos = getPos(e);
-          ctx.beginPath();
-          ctx.moveTo(pos.x, pos.y);
-        }
-        function draw(e) {
-          if (!drawing) return;
-          e.preventDefault();
-          const pos = getPos(e);
-          ctx.lineTo(pos.x, pos.y);
-          ctx.stroke();
-          hasSigned = true;
-        }
-        function endDraw(e) {
-          if (!drawing) return;
-          e.preventDefault();
-          drawing = false;
+        function startDraw(e) { e.preventDefault(); drawing = true; if (wrap) wrap.classList.add('signing');
+          const pos = getPos(e); ctx.beginPath(); ctx.moveTo(pos.x, pos.y); }
+        function draw(e) { if (!drawing) return; e.preventDefault(); const pos = getPos(e);
+          ctx.lineTo(pos.x, pos.y); ctx.stroke(); hasSigned = true; }
+        function endDraw(e) { if (!drawing) return; e.preventDefault(); drawing = false;
           if (wrap) wrap.classList.remove('signing');
-          if (hasSigned) {
-            if (wrap) wrap.classList.add('has-sig');
-            hiddenInput.value = canvas.toDataURL('image/png');
-          }
-        }
-        function clearPad() {
-          const rect = canvas.getBoundingClientRect();
-          ctx.clearRect(0, 0, rect.width, rect.height);
-          hasSigned = false;
-          hiddenInput.value = '';
-          if (wrap) wrap.classList.remove('has-sig');
-        }
+          if (hasSigned) { if (wrap) wrap.classList.add('has-sig'); hiddenInput.value = canvas.toDataURL('image/png'); } }
+        function clearPad() { const rect = canvas.getBoundingClientRect();
+          ctx.clearRect(0, 0, rect.width, rect.height); hasSigned = false; hiddenInput.value = '';
+          if (wrap) wrap.classList.remove('has-sig'); }
 
         canvas.addEventListener('mousedown', startDraw);
         canvas.addEventListener('mousemove', draw);
@@ -837,7 +858,6 @@
         canvas.addEventListener('touchmove', draw, { passive: false });
         canvas.addEventListener('touchend', endDraw);
         canvas.addEventListener('touchcancel', endDraw);
-
         if (clearBtn) clearBtn.addEventListener('click', clearPad);
 
         function rescale() {
@@ -854,40 +874,16 @@
         }
 
         return {
-          canvas: canvas,
-          hiddenInput: hiddenInput,
-          dateInput: dateInput,
+          canvas: canvas, hiddenInput: hiddenInput, dateInput: dateInput,
           isSigned: function () { return hasSigned && !!hiddenInput.value; },
-          clear: clearPad,
-          rescale: rescale,
+          clear: clearPad, rescale: rescale,
         };
       }
 
       const primary = initSignaturePad('signatureCanvas', 'signatureData', 'clearSigBtn', 'signatureDate');
       const secondary = initSignaturePad('signatureCanvas1', 'signatureData1', 'clearSigBtn1', 'signatureDate1');
-
-      // Expose secondary pad for the owner1 toggle to clear it
+      window.__primarySignaturePad = primary;
       window.__owner1SignaturePad = secondary;
-
-      const form = document.getElementById('appForm');
-      if (form && primary) {
-        form.addEventListener('submit', function (e) {
-          if (!primary.isSigned()) {
-            e.preventDefault();
-            alert('Please sign the application before submitting.');
-            primary.canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            return false;
-          }
-          const hasOwner1Sel = document.getElementById('has_owner_1');
-          const owner1Enabled = hasOwner1Sel && hasOwner1Sel.value === 'Yes';
-          if (owner1Enabled && secondary && !secondary.isSigned()) {
-            e.preventDefault();
-            alert('Please have the second owner sign the application before submitting.');
-            secondary.canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            return false;
-          }
-        });
-      }
     })();
   </script>
 </body>
