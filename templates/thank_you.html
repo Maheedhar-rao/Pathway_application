@@ -3,86 +3,38 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Thank You — Next Steps</title>
+  <title>Harvest Lending X Pathway Catalyst — Application Form</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   <style>
     .success-icon {
-      width: 72px;
-      height: 72px;
-      margin: 0 auto 20px;
+      width: 72px; height: 72px; margin: 0 auto 20px;
       background: linear-gradient(135deg, #059669, #34d399);
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      border-radius: 50%; display: flex; align-items: center; justify-content: center;
       box-shadow: 0 12px 32px rgba(52, 211, 153, .3);
       animation: scaleIn .4s ease;
     }
-    .success-icon svg {
-      width: 36px;
-      height: 36px;
-      stroke: white;
-      stroke-width: 3;
-    }
+    .success-icon svg { width: 36px; height: 36px; stroke: white; stroke-width: 3; }
     @keyframes scaleIn {
       0% { transform: scale(0); opacity: 0; }
       60% { transform: scale(1.1); }
       100% { transform: scale(1); opacity: 1; }
     }
     .thank-you-title {
-      text-align: center;
-      margin: 0 0 8px;
-      font-size: 28px;
+      text-align: center; margin: 0 0 8px; font-size: 28px;
       background: linear-gradient(135deg, #34d399, #60a5fa);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
     }
-    .thank-you-subtitle {
-      text-align: center;
-      color: var(--muted);
-      margin: 0 0 24px;
-      font-size: 15px;
-    }
-    .upload-card {
-      margin-top: 24px;
-    }
-    .success-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: rgba(52, 211, 153, .12);
-      border: 1px solid rgba(52, 211, 153, .3);
-      color: #34d399;
-      padding: 10px 16px;
-      border-radius: 10px;
-      font-size: 14px;
-      margin-bottom: 20px;
-    }
+    .thank-you-subtitle { text-align: center; color: var(--muted); margin: 0 0 24px; font-size: 15px; }
     .next-steps {
-      background: rgba(96, 165, 250, .06);
-      border: 1px solid rgba(96, 165, 250, .2);
-      border-radius: 12px;
-      padding: 16px 20px;
-      margin-top: 20px;
+      background: rgba(96, 165, 250, .06); border: 1px solid rgba(96, 165, 250, .2);
+      border-radius: 12px; padding: 16px 20px; margin-top: 20px;
     }
-    .next-steps h4 {
-      margin: 0 0 10px;
-      font-size: 14px;
-      color: var(--primary2);
-    }
-    .next-steps ul {
-      margin: 0;
-      padding-left: 20px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-    .next-steps li {
-      margin: 6px 0;
-    }
+    .next-steps h4 { margin: 0 0 10px; font-size: 14px; color: var(--primary2); }
+    .next-steps ul, .next-steps ol { margin: 0; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .next-steps li { margin: 6px 0; }
   </style>
 </head>
 <body>
@@ -90,186 +42,236 @@
     <div class="brand">
       <div class="brand-left">
         <div class="logo-wrap">
-          <img
-            src="{{ url_for('static', filename='pathway-logo.png') }}"
-            alt="Pathway Catalyst Logo"
-            class="logo"
-            loading="eager"
-          />
+          <img src="{{ url_for('static', filename='pathway-logo.png') }}"
+               alt="Pathway Catalyst Logo" class="logo" loading="eager" />
         </div>
         <div class="brand-text">
           <span class="badge">Harvest Lending X Pathway Catalyst</span>
-          <h1>Application Received</h1>
-          <p class="lead">{% if business %}For <strong>{{ business }}</strong>{% else %}Thank you for your submission{% endif %}</p>
+          <h1>Business Financing Application</h1>
+          <p class="lead">Fast, secure, and confidential submission.</p>
         </div>
       </div>
     </div>
   </header>
 
   <main class="container">
+    {% if is_done %}
+    <!-- ============== DONE STATE ============== -->
+    <canvas class="confetti-canvas" id="confetti"></canvas>
+    <div class="progress-steps">
+      <div class="step completed" data-step="1"><span class="step-num">1</span><span>Contact</span></div>
+      <div class="step-connector"></div>
+      <div class="step completed" data-step="2"><span class="step-num">2</span><span>Business</span></div>
+      <div class="step-connector"></div>
+      <div class="step completed" data-step="3"><span class="step-num">3</span><span>Owner 1</span></div>
+      <div class="step-connector"></div>
+      <div class="step completed" data-step="4"><span class="step-num">4</span><span>Owner 2</span></div>
+      <div class="step-connector"></div>
+      <div class="step completed" data-step="5"><span class="step-num">5</span><span>Documents</span></div>
+      <div class="step-connector"></div>
+      <div class="step completed" data-step="6"><span class="step-num">6</span><span>Credit Setup</span></div>
+      <div class="step-connector"></div>
+      <div class="step completed" data-step="7"><span class="step-num">7</span><span>Credit Login</span></div>
+    </div>
+
     <div class="card success-card">
       <div class="card-body" style="text-align: center; padding: 40px 24px;">
         <div class="success-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <polyline points="20 6 9 17 4 12"/>
-          </svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
-        <h1 class="thank-you-title">Application Submitted!</h1>
-        <p class="thank-you-subtitle">Your application has been received and is being reviewed.</p>
-
-        {% if uploaded %}
-        <div class="success-pill">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="20 6 9 17 4 12"/>
-          </svg>
-          Docs uploaded
-        </div>
-        {% endif %}
-        {% if failed %}
-        <div class="success-pill" style="background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.3);color:#f87171;">
-          Failed to upload: {{ ', '.join(failed) }} — please try again.
-        </div>
-        {% endif %}
-      </div>
-    </div>
-
-    <div class="card upload-card">
-      <div class="card-header">
-        <h2>Upload Supporting Documents</h2>
-        <span class="pill">Optional</span>
-      </div>
-      <div class="card-body">
-        <p style="margin: 0 0 20px; color: var(--muted); font-size: 14px;">
-          Speed up your approval by attaching your bank statements, voided check, and owner ID.
-          Click <strong>Complete Submission</strong> below to finalize your application.
+        <h1 class="thank-you-title">All Set!</h1>
+        <p class="thank-you-subtitle">
+          {% if business %}Thanks for completing the application for <strong>{{ business }}</strong>.{% else %}Thanks for completing the application.{% endif %}
         </p>
-        <form action="{{ url_for('upload_docs') }}" method="POST" enctype="multipart/form-data">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-          <input type="hidden" name="sid" value="{{ sid or '' }}"/>
-          <div class="field" style="margin-bottom: 16px;">
-            <label>Bank Statements</label>
-            <div class="uploader" id="bank-uploader" style="padding: 16px;">
-              <p style="margin: 0 0 8px; font-size: 13px; color: var(--muted);">Add PDFs one at a time or all at once — drag &amp; drop works too.</p>
-              <input type="file" id="bank-files-input" name="bank_files" accept="application/pdf" multiple />
-              <div id="bank-files-list" style="margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;"></div>
-            </div>
-          </div>
-          <div class="grid cols-2">
-            <div class="field">
-              <label>Voided Check</label>
-              <div class="uploader" style="padding: 16px;">
-                <input type="file" name="voided_check" accept="application/pdf,image/*" />
-              </div>
-            </div>
-            <div class="field">
-              <label>Owner ID</label>
-              <div class="uploader" style="padding: 16px;">
-                <input type="file" name="id_doc" accept="application/pdf,image/*" />
-              </div>
-            </div>
-          </div>
-          <div class="actions" style="border-top: none; padding: 20px 0 0;">
-            <button class="btn primary" type="submit">
-              <span>Upload Documents</span>
-            </button>
-          </div>
-        </form>
-
-        <div class="next-steps">
+        <div class="next-steps" style="text-align:left;max-width:520px;margin:0 auto;">
           <h4>What happens next?</h4>
           <ul>
-            <li>Our team will review your application within 24-48 hours</li>
-            <li>We'll contact you if any additional information is needed</li>
-            <li>You'll receive a decision notification via email</li>
+            <li>Our team will review your application within 24-48 hours.</li>
+            <li>We'll contact you if any additional information is needed.</li>
+            <li>You'll receive a decision notification via email.</li>
           </ul>
         </div>
       </div>
     </div>
+    {% else %}
+    <!-- ============== STEP 6 — Credit Setup ============== -->
+    <div class="progress-steps">
+      <div class="step completed" data-step="1"><span class="step-num">1</span><span>Contact</span></div>
+      <div class="step-connector"></div>
+      <div class="step completed" data-step="2"><span class="step-num">2</span><span>Business</span></div>
+      <div class="step-connector"></div>
+      <div class="step completed" data-step="3"><span class="step-num">3</span><span>Owner 1</span></div>
+      <div class="step-connector"></div>
+      <div class="step completed" data-step="4"><span class="step-num">4</span><span>Owner 2</span></div>
+      <div class="step-connector"></div>
+      <div class="step completed" data-step="5"><span class="step-num">5</span><span>Documents</span></div>
+      <div class="step-connector"></div>
+      <div class="step active" data-step="6"><span class="step-num">6</span><span>Credit Setup</span></div>
+      <div class="step-connector"></div>
+      <div class="step" data-step="7"><span class="step-num">7</span><span>Credit Login</span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h2>Credit Setup</h2>
+        <span class="pill">Step 6 of 7</span>
+      </div>
+      <div class="card-body">
+        <div class="section-title"><span class="dot"></span><h3>Soft credit pull — won't affect your score</h3></div>
+        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;line-height:1.6;">
+          We use IDIQ to perform a <strong>soft inquiry</strong> on your credit. A soft pull is only visible
+          to you — it does <strong>not</strong> appear to other lenders and has
+          <strong>no impact on your credit score</strong>. This is different from a hard inquiry, which
+          would temporarily lower your score and remain visible on your report.
+        </p>
+        <p style="margin:0 0 16px;color:var(--muted);font-size:14px;line-height:1.6;">
+          Creating an IDIQ account lets us retrieve the report securely and gives you ongoing access to your
+          own credit monitoring.
+        </p>
+
+        <div class="next-steps">
+          <h4>How it works</h4>
+          <ol>
+            <li>Click <strong>Open IDIQ Signup</strong> to create an account in a new tab.</li>
+            <li>After signup, return here and click <strong>Next</strong> to enter your IDIQ login.</li>
+          </ol>
+        </div>
+
+        <div style="text-align:center;margin:20px 0;">
+          <a class="btn primary" href="{{ idiq_signup_url }}" target="_blank" rel="noopener noreferrer">
+            <span>Open IDIQ Signup &nbsp;↗</span>
+          </a>
+        </div>
+      </div>
+      <div class="actions" style="justify-content:space-between;">
+        <a class="btn ghost" href="{{ url_for('thank_you', sid=sid, done='1') }}">Skip for now</a>
+        <button type="button" class="btn primary" onclick="document.getElementById('credit-login-card').scrollIntoView({behavior:'smooth',block:'start'});">
+          <span>Next</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ============== STEP 7 — Credit Login ============== -->
+    <div class="card" id="credit-login-card" style="margin-top:24px;">
+      <div class="card-header">
+        <h2>Credit Login</h2>
+        <span class="pill">Step 7 of 7</span>
+      </div>
+      <div class="card-body">
+        <div class="section-title"><span class="dot"></span><h3>Enter the IDIQ login you just created</h3></div>
+        <p style="margin:0 0 16px;color:var(--muted);font-size:13px;line-height:1.5;">
+          Your password is encrypted before storage. Only authorized underwriters can decrypt it to pull your
+          credit report. Skip this step if you'd rather have the team follow up out-of-band.
+        </p>
+
+        {% if idiq_already_saved %}
+        <p style="margin:0 0 16px;color:var(--success);font-size:13px;">
+          Credentials are already on file — you can update them below if needed.
+        </p>
+        {% endif %}
+
+        <form action="{{ url_for('idiq_credentials') }}" method="POST" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <input type="hidden" name="sid" value="{{ sid }}" />
+          <div class="grid cols-2">
+            <div class="field">
+              <label>IDIQ Username / Email</label>
+              <input name="idiq_username" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label>IDIQ Password</label>
+              <input type="password" name="idiq_password" autocomplete="new-password" />
+            </div>
+          </div>
+          <div class="actions" style="justify-content:space-between;padding:18px 0 0;border-top:none;">
+            <a class="btn ghost" href="{{ url_for('thank_you', sid=sid, done='1') }}">Skip</a>
+            <button class="btn primary" type="submit"><span>Finish</span></button>
+          </div>
+        </form>
+      </div>
+    </div>
+    {% endif %}
   </main>
 
   <script>
-    // Prevent navigating back to a stale form page after successful submit
+    // Block browser back from returning to the form once we've reached this page
     try {
       history.pushState(null, '', location.href);
       window.addEventListener('popstate', function () { history.go(1); });
     } catch(e){}
 
-    // Accumulate bank-statement selections across multiple picks / drag-and-drop,
-    // so picking files one at a time doesn't overwrite prior selections.
-    (function(){
-      var input = document.getElementById('bank-files-input');
-      var list = document.getElementById('bank-files-list');
-      var drop = document.getElementById('bank-uploader');
-      if (!input || !list || !drop || typeof DataTransfer === 'undefined') return;
+    // Confetti burst on the done state — short, celebratory, then it tidies up.
+    (function () {
+      const c = document.getElementById('confetti');
+      if (!c) return;
+      // Respect reduced-motion preference.
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
-      var files = [];
-      function keyOf(f){ return f.name + '::' + f.size; }
-      function isPdf(f){
-        if (f.type === 'application/pdf') return true;
-        if (!f.type && /\.pdf$/i.test(f.name)) return true;
-        return false;
+      const ctx = c.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      function resize() {
+        c.width = window.innerWidth * dpr;
+        c.height = window.innerHeight * dpr;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.scale(dpr, dpr);
       }
-      function escapeHtml(s){
-        return String(s).replace(/[&<>"']/g, function(c){
-          return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+      resize();
+      window.addEventListener('resize', resize);
+
+      const W = () => window.innerWidth;
+      const H = () => window.innerHeight;
+      const colors = ['#60a5fa', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#22d3ee'];
+      const parts = [];
+      const N = 140;
+      for (let i = 0; i < N; i++) {
+        parts.push({
+          x: W() / 2 + (Math.random() - 0.5) * 80,
+          y: H() * 0.35 + (Math.random() - 0.5) * 40,
+          vx: (Math.random() - 0.5) * 8,
+          vy: -(6 + Math.random() * 8),
+          g: 0.18 + Math.random() * 0.08,
+          drag: 0.992,
+          size: 5 + Math.random() * 6,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          rot: Math.random() * Math.PI * 2,
+          vRot: (Math.random() - 0.5) * 0.3,
+          shape: Math.random() < 0.5 ? 'rect' : 'circle',
         });
       }
-      function render(){
-        list.innerHTML = '';
-        files.forEach(function(f, i){
-          var chip = document.createElement('span');
-          chip.className = 'chip';
-          chip.innerHTML = '<span style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(f.name) + '</span>';
-          var btn = document.createElement('button');
-          btn.type = 'button';
-          btn.setAttribute('aria-label', 'Remove ' + f.name);
-          btn.textContent = '×';
-          btn.style.cssText = 'background:none;border:0;color:inherit;cursor:pointer;font-size:16px;line-height:1;padding:0 2px;';
-          btn.addEventListener('click', function(){ files.splice(i, 1); sync(); });
-          chip.appendChild(btn);
-          list.appendChild(chip);
+
+      const start = performance.now();
+      const DURATION = 4200;
+      function tick(now) {
+        const t = now - start;
+        ctx.clearRect(0, 0, W(), H());
+        parts.forEach(p => {
+          p.vx *= p.drag;
+          p.vy = p.vy * p.drag + p.g;
+          p.x += p.vx;
+          p.y += p.vy;
+          p.rot += p.vRot;
+
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(p.rot);
+          ctx.fillStyle = p.color;
+          ctx.globalAlpha = Math.max(0, 1 - (t / DURATION));
+          if (p.shape === 'rect') {
+            ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+          } else {
+            ctx.beginPath();
+            ctx.arc(0, 0, p.size / 2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
         });
-      }
-      function sync(){
-        var dt = new DataTransfer();
-        files.forEach(function(f){ dt.items.add(f); });
-        input.files = dt.files;
-        render();
-      }
-      function addFiles(incoming){
-        var have = {};
-        files.forEach(function(f){ have[keyOf(f)] = true; });
-        for (var i = 0; i < incoming.length; i++) {
-          var f = incoming[i];
-          if (!isPdf(f)) continue;
-          var k = keyOf(f);
-          if (have[k]) continue;
-          files.push(f);
-          have[k] = true;
+        if (t < DURATION) {
+          requestAnimationFrame(tick);
+        } else {
+          ctx.clearRect(0, 0, W(), H());
         }
-        sync();
       }
-
-      input.addEventListener('change', function(){
-        addFiles(Array.prototype.slice.call(input.files || []));
-      });
-
-      ['dragenter','dragover'].forEach(function(ev){
-        drop.addEventListener(ev, function(e){
-          e.preventDefault(); e.stopPropagation();
-          drop.classList.add('drag-over');
-        });
-      });
-      ['dragleave','drop'].forEach(function(ev){
-        drop.addEventListener(ev, function(e){
-          e.preventDefault(); e.stopPropagation();
-          drop.classList.remove('drag-over');
-        });
-      });
-      drop.addEventListener('drop', function(e){
-        var dropped = (e.dataTransfer && e.dataTransfer.files) ? Array.prototype.slice.call(e.dataTransfer.files) : [];
-        addFiles(dropped);
-      });
+      requestAnimationFrame(tick);
     })();
   </script>
 </body>

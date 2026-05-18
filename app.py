@@ -68,6 +68,9 @@ except ImportError:
     PDF_ENABLED = False
     logging.warning("reportlab not installed. PDF generation disabled. Run: pip install reportlab")
 
+# IDIQ password encryption
+from cryptography.fernet import Fernet, InvalidToken
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
 
@@ -99,6 +102,43 @@ SAM_GOV_API_KEY = os.environ.get("SAM_GOV_API_KEY", "")
 
 # Main team email - receives ALL submissions
 TEAM_EMAIL = os.environ.get("TEAM_EMAIL", "team@pathwaycatalyst.com")
+
+# External URL the applicant follows on page 6 to create their IDIQ account.
+# Placeholder until the real partner URL is provisioned.
+IDIQ_SIGNUP_URL = os.environ.get(
+    "IDIQ_SIGNUP_URL",
+    "https://www.idiq.com/sign-up/"  # TODO: replace with partner-specific URL
+)
+
+# Fernet key used to encrypt the IDIQ password the applicant types on page 7.
+# In production set IDIQ_PASSWORD_KEY (output of `Fernet.generate_key().decode()`).
+# If unset, generate ephemeral so dev still runs — but stored passwords become
+# unrecoverable after each restart, hence the loud warning.
+_idiq_key_env = os.environ.get("IDIQ_PASSWORD_KEY", "").strip()
+if _idiq_key_env:
+    try:
+        _IDIQ_FERNET = Fernet(_idiq_key_env.encode())
+    except Exception as exc:
+        raise RuntimeError(f"IDIQ_PASSWORD_KEY is not a valid Fernet key: {exc}")
+else:
+    logging.warning(
+        "IDIQ_PASSWORD_KEY not set — generating ephemeral key. "
+        "Stored IDIQ passwords will be UNRECOVERABLE across restarts."
+    )
+    _IDIQ_FERNET = Fernet(Fernet.generate_key())
+
+def encrypt_idiq_password(plain: str) -> str:
+    if not plain:
+        return ""
+    return _IDIQ_FERNET.encrypt(plain.encode("utf-8")).decode("utf-8")
+
+def decrypt_idiq_password(token: str) -> Optional[str]:
+    if not token:
+        return None
+    try:
+        return _IDIQ_FERNET.decrypt(token.encode("utf-8")).decode("utf-8")
+    except (InvalidToken, ValueError):
+        return None
 
 # ---- Sales Rep Configuration ------------------------------------------------
 # Reps live in the Supabase `sales_reps` table (see migration
@@ -449,6 +489,15 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
         ["Own Business Location", form_data.get("own_business_location", "")],
     ]
     elements.append(_styled_section_table(prop_data))
+
+    # ── IDIQ Account ── (username only — password stays encrypted in DB)
+    idiq_username = form_data.get("idiq_username", "")
+    if idiq_username:
+        elements.append(Paragraph("IDIQ Account", section_style))
+        elements.append(_styled_section_table([
+            ["IDIQ Username", idiq_username],
+            ["IDIQ Password", "Stored encrypted — retrieve via admin dashboard"],
+        ]))
 
     # ── Signature & Authorization ──
     elements.append(Paragraph("Authorization &amp; Signature", section_style))
@@ -972,7 +1021,9 @@ def lookup_business_sam_gov(business_name: str, state_code: str, ein: str = "") 
 def validate_fields(form: dict) -> dict:
     errors = {}
 
-    # Base required fields
+    # Base required fields. IDIQ credentials are intentionally NOT here —
+    # applicants can submit without creating an IDIQ account; the team will
+    # follow up out-of-band if needed.
     req = [
         'business_legal_name','industry','legal_entity','business_start_date','ein',
         'company_address1','company_city','company_state','company_zip',
@@ -1038,24 +1089,102 @@ def validate_fields(form: dict) -> dict:
 
     return errors
 
+# -------------------- File upload helper --------------------
+def _store_uploaded_file(sid: int, file_storage, dtype: str,
+                         attached_paths: List[str], failed: List[str]) -> bool:
+    """Upload one file to Supabase Storage + insert application_files row.
+    Returns True on success. Failures are logged + appended to `failed` so
+    the caller can continue processing the rest of the batch."""
+    original = file_storage.filename or "file"
+    safe = original.replace("/", "_").replace("\\", "_")
+    unique = f"{uuid.uuid4().hex[:8]}_{safe}"
+    bucket_path = f"{sid}/{dtype}/{unique}"
+    file_bytes = file_storage.read()
+    content_type = file_storage.content_type or "application/octet-stream"
+
+    last_exc = None
+    for attempt in range(3):
+        try:
+            size = _upload_to_storage(file_bytes, bucket_path, content_type)
+            sb.table("application_files").insert({
+                "application_id": sid,
+                "filename": safe,
+                "storage_path": bucket_path,
+                "size_bytes": size,
+                "doc_type": dtype,
+            }).execute()
+            attached_paths.append(bucket_path)
+            return True
+        except Exception as exc:
+            last_exc = exc
+            log.warning("Upload attempt %d failed for %s (%s): %s",
+                        attempt + 1, original, dtype, exc)
+            time.sleep(0.5)
+
+    log.error("Upload failed after 3 attempts for %s (%s): %s", original, dtype, last_exc)
+    failed.append(original)
+    return False
+
+
+def _process_uploads(sid: int, request_files) -> tuple[List[str], List[str], List[str]]:
+    """Pull bank_files / voided_check / id_doc out of a Flask request.files and
+    upload each. Returns (doc_types_saved, attached_storage_paths, failed_filenames)."""
+    saved: List[str] = []
+    attached_paths: List[str] = []
+    failed: List[str] = []
+
+    for f in request_files.getlist("bank_files"):
+        if not f or not f.filename:
+            continue
+        if _store_uploaded_file(sid, f, "bank_statement", attached_paths, failed) \
+                and "bank_statement" not in saved:
+            saved.append("bank_statement")
+
+    for field, dtype in [("voided_check", "voided_check"), ("id_doc", "id_doc")]:
+        f = request_files.get(field)
+        if f and f.filename:
+            if _store_uploaded_file(sid, f, dtype, attached_paths, failed):
+                saved.append(dtype)
+
+    return saved, attached_paths, failed
+
+
 # -------------------- Public Pages --------------------
 @app.route("/")
 def home():
     rep_code = request.args.get("rep", "").strip()
     rep_info = get_rep_info(rep_code)
     rep_sig = sign_rep_code(rep_code) if rep_code else ""
-    return render_template("form.html", rep_code=rep_code, rep_info=rep_info, rep_sig=rep_sig)
+    return render_template(
+        "form.html",
+        rep_code=rep_code,
+        rep_info=rep_info,
+        rep_sig=rep_sig,
+        idiq_signup_url=IDIQ_SIGNUP_URL,
+    )
 
 @app.route("/thank-you")
 def thank_you():
     sid = request.args.get("sid", type=int)
     business = None
+    idiq_already_saved = False
     if sid:
-        res = sb.table("applications").select("business_legal_name").eq("id", sid).limit(1).execute()
+        res = sb.table("applications").select(
+            "business_legal_name, idiq_username"
+        ).eq("id", sid).limit(1).execute()
         rows = res.data or []
         if rows:
             business = rows[0].get("business_legal_name")
-    return render_template("thank_you.html", sid=sid, business=business)
+            idiq_already_saved = bool(rows[0].get("idiq_username"))
+    return render_template(
+        "thank_you.html",
+        sid=sid,
+        business=business,
+        idiq_signup_url=IDIQ_SIGNUP_URL,
+        idiq_already_saved=idiq_already_saved,
+        idiq_just_saved=(request.args.get("idiq") == "saved"),
+        is_done=(request.args.get("done") == "1"),
+    )
 
 # -------------------- Submission Endpoints --------------------
 @app.route("/submit", methods=["POST"])
@@ -1089,7 +1218,12 @@ def submit():
 
     if errors:
         rep_sig = sign_rep_code(rep_code) if rep_code else ""
-        return render_template("form.html", errors=errors, form=form, rep_code=rep_code, rep_info=rep_info, rep_sig=rep_sig), 400
+        return render_template(
+            "form.html",
+            errors=errors, form=form,
+            rep_code=rep_code, rep_info=rep_info, rep_sig=rep_sig,
+            idiq_signup_url=IDIQ_SIGNUP_URL,
+        ), 400
 
     business_legal_name = form.get("business_legal_name") or ""
     industry = form.get("industry") or ""
@@ -1123,7 +1257,8 @@ def submit():
              business_legal_name, form.get("company_state", ""),
              business_lookup.get("lookup_status"))
 
-    # Insert into Supabase
+    # Insert into Supabase. IDIQ credentials are collected post-submit on the
+    # thank-you page (see /idiq-credentials), so they're left NULL here.
     db_payload = {
         "business_legal_name": business_legal_name,
         "industry": industry,
@@ -1145,7 +1280,11 @@ def submit():
         abort(500, description="Insert failed")
     submission_id = ins.data[0]["id"]
 
-    saved_paths: List[str] = []
+    # Process inline file uploads (bank statements / voided check / ID).
+    # All optional per the new flow; failures are logged but don't block.
+    _saved_types, saved_paths, _failed = _process_uploads(submission_id, request.files)
+    if _failed:
+        log.warning("Submission %s had upload failures: %s", submission_id, _failed)
 
     # Generate PDF and email to team + rep (in background so user doesn't wait)
     if PDF_ENABLED:
@@ -1188,63 +1327,41 @@ def submit():
 
     return redirect(url_for("thank_you", sid=submission_id))
 
+@app.route("/idiq-credentials", methods=["POST"])
+def idiq_credentials():
+    """Attach IDIQ login info to an already-submitted application.
+    The user reaches this from the thank-you page after submitting the main
+    application. Username is stored plain (needed for lookup); password is
+    Fernet-encrypted with IDIQ_PASSWORD_KEY before persistence."""
+    sid = request.form.get("sid", type=int)
+    if not sid:
+        abort(400)
+
+    username = (request.form.get("idiq_username") or "").strip()
+    password = request.form.get("idiq_password") or ""
+    if not username and not password:
+        # Nothing to do — user skipped. Bounce back to thank-you.
+        return redirect(url_for("thank_you", sid=sid))
+
+    try:
+        sb.table("applications").update({
+            "idiq_username": username or None,
+            "idiq_password_encrypted": encrypt_idiq_password(password) if password else None,
+        }).eq("id", sid).execute()
+    except Exception as exc:
+        log.error("Failed to persist IDIQ credentials for %s: %s", sid, exc)
+        abort(500, description="Failed to save IDIQ credentials")
+
+    return redirect(url_for("thank_you", sid=sid, done="1"))
+
+
 @app.route("/upload-docs", methods=["POST"])
 def upload_docs():
     sid = request.form.get("sid", type=int)
     if not sid:
         abort(400)
 
-    saved = []
-    attached_paths: List[str] = []
-    failed: List[str] = []
-
-    def _store_one(file_storage, dtype: str):
-        """Upload a single file with retry. Returns True on success, False on
-        failure (failure is logged but never raises so the batch continues)."""
-        original = file_storage.filename or "file"
-        safe = original.replace("/", "_").replace("\\", "_")
-        # Unique prefix prevents filename collisions within a submission.
-        unique = f"{uuid.uuid4().hex[:8]}_{safe}"
-        bucket_path = f"{sid}/{dtype}/{unique}"
-        file_bytes = file_storage.read()
-        content_type = file_storage.content_type or "application/octet-stream"
-
-        last_exc = None
-        for attempt in range(3):
-            try:
-                size = _upload_to_storage(file_bytes, bucket_path, content_type)
-                sb.table("application_files").insert({
-                    "application_id": sid,
-                    "filename": safe,
-                    "storage_path": bucket_path,
-                    "size_bytes": size,
-                    "doc_type": dtype,
-                }).execute()
-                attached_paths.append(bucket_path)
-                return True
-            except Exception as exc:
-                last_exc = exc
-                log.warning("Upload attempt %d failed for %s (%s): %s",
-                            attempt + 1, original, dtype, exc)
-                time.sleep(0.5)
-
-        log.error("Upload failed after 3 attempts for %s (%s): %s", original, dtype, last_exc)
-        failed.append(original)
-        return False
-
-    # Bank statements (multiple)
-    for f in request.files.getlist("bank_files"):
-        if not f or not f.filename:
-            continue
-        if _store_one(f, "bank_statement") and "bank_statement" not in saved:
-            saved.append("bank_statement")
-
-    # Voided check + ID (single files)
-    for field, dtype in [("voided_check", "voided_check"), ("id_doc", "id_doc")]:
-        f = request.files.get(field)
-        if f and f.filename:
-            if _store_one(f, dtype):
-                saved.append(dtype)
+    saved, attached_paths, failed = _process_uploads(sid, request.files)
 
     # Email uploaded documents to team + rep (in background)
     if attached_paths:
