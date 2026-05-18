@@ -48,6 +48,7 @@ from flask import (
     Flask, request, redirect, url_for, render_template, jsonify,
     send_from_directory, abort, session
 )
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash
 from supabase import create_client, Client
 from dotenv import load_dotenv, find_dotenv
@@ -222,6 +223,12 @@ def _get_signed_url(bucket_path: str, expires_in: int = SIGNED_URL_EXPIRY) -> st
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("APP_SECRET", "dev-secret")
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB upload cap
+
+# Railway terminates TLS at the edge and forwards plain HTTP to this app.
+# Without ProxyFix, request.host_url returns http://... — which made the rep
+# tracking links rendered on /admin/reps come out as insecure URLs. Trust the
+# X-Forwarded-Proto / X-Forwarded-Host headers from one proxy hop.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 csrf = CSRFProtect(app)
