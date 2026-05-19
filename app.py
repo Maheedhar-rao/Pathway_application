@@ -588,6 +588,7 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
     doc_count = len(attached_files) if attached_files else 0
     submitted = datetime.now().strftime('%B %d, %Y at %I:%M %p')
     base_subject = f"New Application: {business_name} (ID: {submission_id})"
+    is_applicant_copy = (email_type == "applicant_receipt")
     if email_type == "docs_update":
         subject = f"Re: {base_subject}"
         alert_text = "Additional Documents Uploaded"
@@ -595,6 +596,16 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
         body_note = (
             "The applicant has uploaded additional supporting documents for this application. "
             "Please find them attached to this email."
+        )
+    elif is_applicant_copy:
+        # Customer-facing receipt — friendlier copy, no internal rep details.
+        subject = f"Application Received — {business_name}"
+        alert_text = "Thanks for your application"
+        attachments_text = "Application PDF"
+        body_note = (
+            "We've received your business financing application. Our team will review it "
+            "and reach out within 24-48 hours if any additional information is needed. "
+            "A copy of your application is attached for your records."
         )
     else:
         subject = base_subject
@@ -604,6 +615,12 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
             "Please find the complete application summary attached to this email. "
             "You can also view full details in the admin dashboard."
         )
+
+    # The Representative row is internal-only — omit from the applicant's copy.
+    rep_row_html = "" if is_applicant_copy else f"""<tr>
+                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;">Representative</td>
+                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;">{rep_line}</td>
+              </tr>"""
 
     html_body = f"""
 <!DOCTYPE html>
@@ -649,10 +666,7 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
                 <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;">Submitted</td>
                 <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;">{submitted}</td>
               </tr>
-              <tr>
-                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;">Representative</td>
-                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;">{rep_line}</td>
-              </tr>
+              {rep_row_html}
               <tr>
                 <td style="padding:8px 0;color:#64748b;font-size:13px;">Attachments</td>
                 <td style="padding:8px 0;color:#1e293b;font-size:14px;">{attachments_text}</td>
@@ -681,10 +695,11 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
 </html>
     """
 
+    plain_rep_line = "" if is_applicant_copy else f"{rep_line}\n"
     plain_text = (
         f"{alert_text}\n\nBusiness: {business_name}\n"
         f"Application ID: {submission_id}\nSubmitted: {submitted}\n"
-        f"{rep_line}\n\nAttachments: {attachments_text}\n\n"
+        f"{plain_rep_line}\nAttachments: {attachments_text}\n\n"
         "Powered by CROC"
     )
 
@@ -1293,7 +1308,7 @@ def submit():
     if _failed:
         log.warning("Submission %s had upload failures: %s", submission_id, _failed)
 
-    # Generate PDF and email to team + rep (in background so user doesn't wait)
+    # Generate PDF and email to team + rep + applicant (background so user doesn't wait)
     if PDF_ENABLED:
         try:
             rep_name = rep_info["name"] if rep_info else None
@@ -1301,30 +1316,62 @@ def submit():
             pdf_buffer = generate_application_pdf(form, submission_id, rep_name)
 
             if pdf_buffer:
+                # Read the PDF bytes once. Each background thread gets its own
+                # BytesIO so the two sends can run in parallel without racing
+                # on buffer position.
+                pdf_buffer.seek(0)
+                pdf_bytes = pdf_buffer.read()
+
                 recipients = [TEAM_EMAIL]
                 if rep_info and rep_info["email"]:
                     recipients.append(rep_info["email"])
 
-                # Send email in background thread — user gets instant redirect
-                def _bg_send(recips, biz, pdf_buf, sid, rname, files):
+                def _bg_send_team(recips, biz, sid, rname, files):
                     try:
                         ok = send_email_with_pdf(
                             to_emails=recips, business_name=biz,
-                            pdf_buffer=pdf_buf, submission_id=sid,
+                            pdf_buffer=BytesIO(pdf_bytes), submission_id=sid,
                             rep_name=rname, attached_files=files,
                         )
                         if ok:
                             _mark_email_sent(sid, "initial_email_sent_at")
                     except Exception as exc:
-                        log.error("Background email failed for %s: %s", sid, exc)
+                        log.error("Background team email failed for %s: %s", sid, exc)
 
                 threading.Thread(
-                    target=_bg_send,
-                    args=(recipients, business_legal_name, pdf_buffer,
+                    target=_bg_send_team,
+                    args=(recipients, business_legal_name,
                           submission_id, rep_name, saved_paths),
                     daemon=True,
                 ).start()
-                log.info("Email queued in background for submission %s → %s", submission_id, recipients)
+                log.info("Team email queued for submission %s → %s", submission_id, recipients)
+
+                # Send a customer-facing receipt to the applicant. Best-effort —
+                # failure is logged but never blocks the team email or the user
+                # redirect. Basic "@" check guards malformed values from reaching
+                # the email provider.
+                applicant_email = (form.get("owner_0_email") or "").strip()
+                if applicant_email and "@" in applicant_email:
+                    def _bg_send_applicant(to_email, biz, sid, files):
+                        try:
+                            send_email_with_pdf(
+                                to_emails=[to_email], business_name=biz,
+                                pdf_buffer=BytesIO(pdf_bytes), submission_id=sid,
+                                rep_name=None, attached_files=files,
+                                email_type="applicant_receipt",
+                            )
+                        except Exception as exc:
+                            log.error("Background applicant email failed for %s: %s", sid, exc)
+
+                    threading.Thread(
+                        target=_bg_send_applicant,
+                        args=(applicant_email, business_legal_name,
+                              submission_id, saved_paths),
+                        daemon=True,
+                    ).start()
+                    log.info("Applicant receipt queued for submission %s → %s", submission_id, applicant_email)
+                else:
+                    log.info("No valid applicant email on submission %s — skipping receipt", submission_id)
             else:
                 log.warning("PDF generation returned None for submission %s", submission_id)
         except Exception as e:
