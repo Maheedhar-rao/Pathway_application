@@ -72,6 +72,9 @@ except ImportError:
 # IDIQ password encryption
 from cryptography.fernet import Fernet, InvalidToken
 
+# Signed expiring tokens for the "resume application" magic links
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
 
@@ -140,6 +143,38 @@ def decrypt_idiq_password(token: str) -> Optional[str]:
         return _IDIQ_FERNET.decrypt(token.encode("utf-8")).decode("utf-8")
     except (InvalidToken, ValueError):
         return None
+
+
+# ── Resume tokens ────────────────────────────────────────────────────────────
+# Magic link in the applicant receipt email lets the merchant come back to
+# finish their IDIQ signup without re-filling the application. Tokens are
+# signed with APP_SECRET and expire after 30 days. Admin can resend a fresh
+# token from the dashboard; merchants can self-serve via the expired-link page.
+RESUME_TOKEN_MAX_AGE_SECONDS = 30 * 86400  # 30 days
+
+def _resume_serializer() -> URLSafeTimedSerializer:
+    # Built lazily so a key rotation via APP_SECRET takes effect on next request
+    # without needing a module reload.
+    return URLSafeTimedSerializer(
+        os.environ.get("APP_SECRET", "dev-secret"),
+        salt="resume-link-v1",
+    )
+
+def sign_resume_token(sid: int) -> str:
+    return _resume_serializer().dumps({"sid": int(sid)})
+
+def verify_resume_token(token: str) -> tuple[Optional[int], str]:
+    """Return (sid, status). status is one of: 'ok', 'expired', 'invalid'."""
+    if not token:
+        return None, "invalid"
+    try:
+        data = _resume_serializer().loads(token, max_age=RESUME_TOKEN_MAX_AGE_SECONDS)
+    except SignatureExpired:
+        return None, "expired"
+    except BadSignature:
+        return None, "invalid"
+    sid = data.get("sid") if isinstance(data, dict) else None
+    return (int(sid) if sid else None), ("ok" if sid else "invalid")
 
 # ---- Sales Rep Configuration ------------------------------------------------
 # Reps live in the Supabase `sales_reps` table (see migration
@@ -582,8 +617,13 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
     return buffer
 
 
-def _build_email_content(business_name, submission_id, rep_name, attached_files, email_type="new_application"):
-    """Build shared email HTML, plain text, and subject."""
+def _build_email_content(business_name, submission_id, rep_name, attached_files,
+                         email_type="new_application", resume_url=None):
+    """Build shared email HTML, plain text, and subject.
+
+    `resume_url` is only rendered for applicant_receipt emails — it links the
+    merchant back to the credit-setup page without re-filling the application.
+    """
     rep_line = f"Referred by: {rep_name}" if rep_name else "Direct submission (no rep)"
     doc_count = len(attached_files) if attached_files else 0
     submitted = datetime.now().strftime('%B %d, %Y at %I:%M %p')
@@ -621,6 +661,29 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
                 <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;">Representative</td>
                 <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;">{rep_line}</td>
               </tr>"""
+
+    # Resume-link CTA for the merchant. Only the applicant receipt gets it.
+    resume_cta_html = ""
+    if is_applicant_copy and resume_url:
+        resume_cta_html = f"""
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;">
+              <tr>
+                <td style="background:rgba(96,165,250,0.08);border:1px solid #bfdbfe;border-radius:10px;padding:18px 22px;">
+                  <p style="margin:0 0 10px;color:#1e40af;font-size:15px;font-weight:600;">Want to finish your credit setup later?</p>
+                  <p style="margin:0 0 14px;color:#475569;font-size:13px;line-height:1.55;">
+                    We use a soft credit pull through IDIQ (no impact to your score) to speed up review.
+                    If you skipped it earlier, use the secure link below to come back any time in the next 30 days.
+                  </p>
+                  <p style="margin:0;">
+                    <a href="{resume_url}"
+                       style="display:inline-block;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#ffffff;text-decoration:none;padding:11px 22px;border-radius:8px;font-weight:600;font-size:14px;">
+                       Complete Credit Setup
+                    </a>
+                  </p>
+                </td>
+              </tr>
+            </table>
+        """
 
     html_body = f"""
 <!DOCTYPE html>
@@ -677,6 +740,8 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
               {body_note}
             </p>
 
+            {resume_cta_html}
+
           </td>
         </tr>
 
@@ -696,10 +761,17 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
     """
 
     plain_rep_line = "" if is_applicant_copy else f"{rep_line}\n"
+    plain_resume_line = ""
+    if is_applicant_copy and resume_url:
+        plain_resume_line = (
+            "\nWant to finish your credit setup later? Use this secure link "
+            "(valid 30 days):\n" + resume_url + "\n"
+        )
     plain_text = (
         f"{alert_text}\n\nBusiness: {business_name}\n"
         f"Application ID: {submission_id}\nSubmitted: {submitted}\n"
-        f"{plain_rep_line}\nAttachments: {attachments_text}\n\n"
+        f"{plain_rep_line}\nAttachments: {attachments_text}\n"
+        f"{plain_resume_line}\n"
         "Powered by CROC"
     )
 
@@ -893,6 +965,7 @@ def send_email_with_pdf(
     rep_name: str = None,
     attached_files: List[str] = None,
     email_type: str = "new_application",
+    resume_url: str = None,
 ):
     """Send email with PDF + attachments. Priority: Resend → Supabase Edge Fn → SMTP."""
     if not RESEND_API_KEY and not EMAIL_ENABLED:
@@ -904,7 +977,8 @@ def send_email_with_pdf(
         return False
 
     subject, html_body, plain_text = _build_email_content(
-        business_name, submission_id, rep_name, attached_files, email_type=email_type
+        business_name, submission_id, rep_name, attached_files,
+        email_type=email_type, resume_url=resume_url,
     )
 
     thread_id = _application_message_id(submission_id)
@@ -1352,13 +1426,19 @@ def submit():
                 # the email provider.
                 applicant_email = (form.get("owner_0_email") or "").strip()
                 if applicant_email and "@" in applicant_email:
-                    def _bg_send_applicant(to_email, biz, sid, files):
+                    # Magic link the merchant can click later to land back on
+                    # /credit-setup without re-filling the application.
+                    resume_token = sign_resume_token(submission_id)
+                    resume_url = url_for("resume_application", token=resume_token, _external=True)
+
+                    def _bg_send_applicant(to_email, biz, sid, files, link):
                         try:
                             send_email_with_pdf(
                                 to_emails=[to_email], business_name=biz,
                                 pdf_buffer=BytesIO(pdf_bytes), submission_id=sid,
                                 rep_name=None, attached_files=files,
                                 email_type="applicant_receipt",
+                                resume_url=link,
                             )
                         except Exception as exc:
                             log.error("Background applicant email failed for %s: %s", sid, exc)
@@ -1366,7 +1446,7 @@ def submit():
                     threading.Thread(
                         target=_bg_send_applicant,
                         args=(applicant_email, business_legal_name,
-                              submission_id, saved_paths),
+                              submission_id, saved_paths, resume_url),
                         daemon=True,
                     ).start()
                     log.info("Applicant receipt queued for submission %s → %s", submission_id, applicant_email)
@@ -1380,6 +1460,188 @@ def submit():
         log.warning("PDF_ENABLED is False – reportlab not installed. Skipping PDF/email for submission %s", submission_id)
 
     return redirect(url_for("thank_you", sid=submission_id))
+
+# ── Resume flow ─────────────────────────────────────────────────────────────
+# Lets the merchant come back later (via emailed magic link) to attach IDIQ
+# credentials to a submitted application without going through the wizard
+# again. Backed by signed 30-day tokens; admin can resend a fresh one from
+# the dashboard, applicants can self-serve from the expired-link page.
+
+SESSION_RESUME_KEY = "resume_sid"
+
+
+def _email_resume_link(sid: int, to_email: str, business_name: str = "") -> bool:
+    """Send the merchant a fresh 30-day resume link. Returns True on success."""
+    if not to_email or "@" not in to_email:
+        return False
+    token = sign_resume_token(sid)
+    link = url_for("resume_application", token=token, _external=True)
+
+    subject = "Complete your credit setup — Pathway Catalyst"
+    html_body = f"""
+<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 0;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.06);">
+        <tr><td style="background:linear-gradient(135deg,#1e40af,#3b82f6);padding:28px 32px;text-align:center;">
+          <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700;">Pathway Catalyst</h1>
+          <p style="margin:6px 0 0;color:#bfdbfe;font-size:13px;">Complete your application</p>
+        </td></tr>
+        <tr><td style="padding:28px 32px;">
+          <p style="margin:0 0 12px;color:#1e293b;font-size:15px;">Hi{(' ' + business_name) if business_name else ''},</p>
+          <p style="margin:0 0 16px;color:#475569;font-size:14px;line-height:1.6;">
+            We're finishing the review of your business financing application.
+            To proceed, we need to run a <strong>soft credit pull</strong> through IDIQ —
+            it won't impact your score. Use the secure link below to set up your IDIQ account
+            and share your credentials with us. The link is valid for 30 days.
+          </p>
+          <p style="margin:24px 0;text-align:center;">
+            <a href="{link}" style="display:inline-block;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;text-decoration:none;padding:13px 28px;border-radius:8px;font-weight:600;font-size:15px;">
+              Complete Credit Setup
+            </a>
+          </p>
+          <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">
+            If the button doesn't work, copy and paste this URL into your browser:<br>
+            <span style="word-break:break-all;color:#475569;">{link}</span>
+          </p>
+        </td></tr>
+        <tr><td style="background:#f8fafc;padding:18px 32px;border-top:1px solid #e2e8f0;text-align:center;">
+          <p style="margin:0 0 4px;color:#64748b;font-size:12px;">Pathway Catalyst &mdash; See the Pathway. Be the Catalyst.</p>
+          <p style="margin:0;color:#94a3b8;font-size:11px;font-style:italic;">Powered by CROC</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>
+""".strip()
+    plain_text = (
+        f"Hi{(' ' + business_name) if business_name else ''},\n\n"
+        f"To finish reviewing your application, we need to run a soft credit pull "
+        f"through IDIQ (no impact to your score). Click below to complete the "
+        f"setup. The link is valid for 30 days.\n\n{link}\n\nPowered by CROC"
+    )
+
+    try:
+        if RESEND_API_KEY:
+            return _send_via_resend([to_email], subject, html_body, plain_text,
+                                    None, sid, None,
+                                    message_id=None, in_reply_to=_application_message_id(sid))
+        return _send_via_supabase_fn([to_email], subject, html_body, plain_text,
+                                     None, sid, None,
+                                     message_id=None, in_reply_to=_application_message_id(sid))
+    except Exception:
+        try:
+            return _send_via_smtp([to_email], subject, html_body, plain_text,
+                                  None, sid, None,
+                                  message_id=None, in_reply_to=_application_message_id(sid))
+        except Exception as e:
+            log.error("Resume-link email failed for sid=%s to=%s: %s", sid, to_email, e)
+            return False
+
+
+@app.route("/resume")
+def resume_application():
+    """Validate a magic-link token; on success stash sid in the session and
+    redirect to the standalone credit-setup page. On failure/expiry, show a
+    page that lets the merchant request a fresh link by email."""
+    token = request.args.get("token", "")
+    sid, status = verify_resume_token(token)
+    if status == "ok" and sid:
+        session[SESSION_RESUME_KEY] = sid
+        return redirect(url_for("credit_setup"))
+    # Expired or invalid — render the recovery page; show "request another"
+    # form for expired tokens, generic for invalid.
+    return render_template(
+        "credit_link_expired.html",
+        expired=(status == "expired"),
+        idiq_signup_url=IDIQ_SIGNUP_URL,
+    ), 410 if status == "expired" else 404
+
+
+@app.route("/credit-setup", methods=["GET"])
+def credit_setup():
+    sid = session.get(SESSION_RESUME_KEY)
+    if not sid:
+        # No active resume session — send them back to the expired/recover page.
+        return redirect(url_for("credit_setup_link_lost"))
+
+    res = sb.table("applications").select(
+        "id, business_legal_name, idiq_username"
+    ).eq("id", sid).limit(1).execute()
+    rows = res.data or []
+    if not rows:
+        session.pop(SESSION_RESUME_KEY, None)
+        return redirect(url_for("credit_setup_link_lost"))
+
+    row = rows[0]
+    return render_template(
+        "credit_setup.html",
+        sid=sid,
+        business=row.get("business_legal_name"),
+        idiq_signup_url=IDIQ_SIGNUP_URL,
+        idiq_already_saved=bool(row.get("idiq_username")),
+        is_done=(request.args.get("done") == "1"),
+    )
+
+
+@app.route("/credit-setup/credentials", methods=["POST"])
+def credit_setup_credentials():
+    sid = session.get(SESSION_RESUME_KEY)
+    if not sid:
+        abort(403)
+
+    username = (request.form.get("idiq_username") or "").strip()
+    password = request.form.get("idiq_password") or ""
+    if not username and not password:
+        return redirect(url_for("credit_setup", done="1"))
+
+    try:
+        sb.table("applications").update({
+            "idiq_username": username or None,
+            "idiq_password_encrypted": encrypt_idiq_password(password) if password else None,
+        }).eq("id", sid).execute()
+    except Exception as exc:
+        log.error("Failed to persist IDIQ creds via credit-setup for %s: %s", sid, exc)
+        abort(500, description="Failed to save IDIQ credentials")
+
+    return redirect(url_for("credit_setup", done="1"))
+
+
+@app.route("/credit-setup/link-lost", methods=["GET", "POST"])
+def credit_setup_link_lost():
+    """Self-service flow for a lost/expired link.
+    POST: user submits email; if any application matches, send a fresh resume
+    link. Always return generic success so we don't leak which emails exist."""
+    sent = False
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+        if email and "@" in email:
+            try:
+                # Find the most recent application with this owner email and
+                # send a fresh link there. We don't tell the user whether
+                # anything matched.
+                # Note: owner_0_email lives inside the JSONB payload column.
+                # Postgrest supports `payload->>owner_0_email`.
+                res = sb.table("applications").select(
+                    "id, business_legal_name"
+                ).filter("payload->>owner_0_email", "eq", email).order(
+                    "id", desc=True
+                ).limit(1).execute()
+                rows = res.data or []
+                if rows:
+                    _email_resume_link(rows[0]["id"], email,
+                                       business_name=rows[0].get("business_legal_name") or "")
+            except Exception as exc:
+                log.warning("Link-lost lookup failed for %r: %s", email, exc)
+            sent = True  # always claim success — avoid email enumeration
+    return render_template(
+        "credit_link_expired.html",
+        expired=False,
+        sent=sent,
+        idiq_signup_url=IDIQ_SIGNUP_URL,
+    )
+
 
 @app.route("/idiq-credentials", methods=["POST"])
 def idiq_credentials():
@@ -1498,6 +1760,34 @@ def api_submissions():
         if r.get("loan_amount") is not None:
             r["loan_amount"] = float(r["loan_amount"])
     return jsonify({"rows": rows, "total": res.count or 0})
+
+@app.route("/api/submissions/<int:sid>/resend-credit-link", methods=["POST"])
+@admin_required
+def api_resend_credit_link(sid: int):
+    """Admin-triggered: email a fresh resume link for this application.
+    Defaults to owner_0_email; admin may override via `email` in the JSON body."""
+    body = request.get_json(silent=True) or {}
+    override = (body.get("email") or "").strip().lower()
+
+    res = sb.table("applications").select(
+        "id, business_legal_name, payload"
+    ).eq("id", sid).limit(1).execute()
+    rows = res.data or []
+    if not rows:
+        return jsonify({"error": "Application not found."}), 404
+
+    row = rows[0]
+    payload = row.get("payload") or {}
+    default_email = (payload.get("owner_0_email") or "").strip().lower()
+    to_email = override or default_email
+    if not to_email or "@" not in to_email:
+        return jsonify({"error": "No valid email — provide one in the override field."}), 400
+
+    ok = _email_resume_link(sid, to_email, business_name=row.get("business_legal_name") or "")
+    if not ok:
+        return jsonify({"error": "Failed to send email (check provider config)."}), 500
+    return jsonify({"ok": True, "sent_to": to_email})
+
 
 @app.route("/api/submissions/<int:sid>")
 @admin_required

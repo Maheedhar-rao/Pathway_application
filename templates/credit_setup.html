@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Cache-Control" content="no-store" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Credit Setup — Pathway Catalyst</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  <style>
+    /* ── Distinct visual identity for the revisit flow ─────────────────────
+       Amber/gold accents, single focused card, no wizard progress bar.
+       Different background so users immediately know this is a separate
+       experience from the application form. */
+
+    body {
+      background:
+        radial-gradient(900px 500px at 12% 0%, rgba(251, 191, 36, 0.18), transparent 60%),
+        radial-gradient(800px 480px at 88% 12%, rgba(167, 139, 250, 0.16), transparent 55%),
+        linear-gradient(180deg, #0b1020, #0f172a);
+    }
+    body::before {
+      background: radial-gradient(circle, #fbbf24 0%, transparent 70%);
+      opacity: .22;
+    }
+    body::after {
+      background: radial-gradient(circle, #a78bfa 0%, transparent 70%);
+      opacity: .22;
+    }
+
+    .credit-shell {
+      max-width: 720px;
+      margin: 40px auto 64px;
+      padding: 0 16px;
+    }
+
+    .credit-header {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+    .credit-eyebrow {
+      display: inline-block;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      background: linear-gradient(135deg, #fbbf24, #f59e0b);
+      color: #0b1020;
+      margin-bottom: 14px;
+    }
+    .credit-title {
+      margin: 0 0 8px;
+      font-size: 30px;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      color: #f1f5f9;
+    }
+    .credit-subtitle {
+      margin: 0;
+      color: rgba(226, 232, 240, 0.7);
+      font-size: 15px;
+    }
+
+    /* Credit-themed card override */
+    .credit-card {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015));
+      border: 1px solid rgba(251, 191, 36, 0.18);
+      border-radius: 20px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45),
+                  0 0 0 1px rgba(251, 191, 36, 0.06) inset;
+      overflow: hidden;
+    }
+
+    .credit-card-body {
+      padding: 28px 28px 24px;
+    }
+
+    .step-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .step-block {
+      position: relative;
+      padding: 22px 22px 22px 64px;
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.55);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+    }
+    .step-block .step-marker {
+      position: absolute;
+      left: 18px;
+      top: 22px;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #fbbf24, #f59e0b);
+      color: #0b1020;
+      font-weight: 800;
+      font-size: 14px;
+      box-shadow: 0 6px 14px rgba(251, 191, 36, 0.35);
+    }
+    .step-block h3 {
+      margin: 0 0 8px;
+      color: #fde68a;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .step-block p {
+      margin: 0 0 14px;
+      color: rgba(226, 232, 240, 0.78);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .credit-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(52, 211, 153, 0.12);
+      border: 1px solid rgba(52, 211, 153, 0.3);
+      color: #34d399;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .btn-credit {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: linear-gradient(135deg, #fbbf24, #f59e0b);
+      color: #0b1020;
+      border: 0;
+      padding: 12px 22px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      text-decoration: none;
+      box-shadow: 0 10px 24px rgba(251, 191, 36, 0.3);
+      transition: transform 0.15s ease, box-shadow 0.2s ease;
+    }
+    .btn-credit:hover { transform: translateY(-1px); box-shadow: 0 14px 28px rgba(251, 191, 36, 0.4); }
+    .btn-credit:active { transform: translateY(0); }
+
+    .creds-form .field label {
+      color: #fde68a;
+    }
+    .creds-form input {
+      background: rgba(15, 23, 42, 0.75);
+    }
+    .creds-form input:focus {
+      border-color: rgba(251, 191, 36, 0.7);
+      box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.18);
+    }
+
+    .form-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+      margin-top: 16px;
+    }
+
+    .info-note {
+      margin-top: 18px;
+      padding: 14px 16px;
+      border-radius: 10px;
+      background: rgba(96, 165, 250, 0.08);
+      border: 1px solid rgba(96, 165, 250, 0.18);
+      color: rgba(226, 232, 240, 0.78);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    /* Done state */
+    .done-hero {
+      text-align: center;
+      padding: 56px 28px;
+    }
+    .done-icon-wrap {
+      width: 88px; height: 88px;
+      margin: 0 auto 24px;
+      background: linear-gradient(135deg, #fbbf24, #f59e0b);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 16px 40px rgba(251, 191, 36, 0.35);
+      position: relative;
+    }
+    .done-icon-wrap::before, .done-icon-wrap::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 2px solid rgba(251, 191, 36, 0.5);
+      animation: ringPulse 2.4s ease-out infinite;
+      pointer-events: none;
+    }
+    .done-icon-wrap::after { animation-delay: 1.2s; }
+    @keyframes ringPulse {
+      0%   { transform: scale(1); opacity: 0.7; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+    .done-icon-wrap svg {
+      width: 44px; height: 44px; stroke: #0b1020; stroke-width: 3;
+    }
+    .done-title {
+      margin: 0 0 10px;
+      font-size: 30px;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #fbbf24, #fde68a);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+
+    @media (max-width: 600px) {
+      .credit-title { font-size: 24px; }
+      .credit-card-body { padding: 22px 20px; }
+      .step-block { padding: 20px 18px 20px 58px; }
+      .step-block .step-marker { left: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="credit-shell">
+    <header class="credit-header">
+      <span class="credit-eyebrow">Pathway Catalyst · Credit Setup</span>
+      <h1 class="credit-title">
+        {% if is_done %}All set — thanks for completing this!{% else %}Let's finish your credit setup{% endif %}
+      </h1>
+      {% if not is_done %}
+      <p class="credit-subtitle">
+        {% if business %}For <strong>{{ business }}</strong> · {% endif %}This takes about 2 minutes.
+      </p>
+      {% endif %}
+    </header>
+
+    {% if is_done %}
+    <!-- ============== DONE STATE ============== -->
+    <canvas class="confetti-canvas" id="confetti"></canvas>
+    <div class="credit-card">
+      <div class="done-hero">
+        <div class="done-icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <h2 class="done-title">You're done!</h2>
+        <p style="color:rgba(226,232,240,.75);font-size:15px;line-height:1.55;max-width:440px;margin:0 auto;">
+          {% if business %}We've got everything we need for <strong>{{ business }}</strong>.{% else %}We've got everything we need.{% endif %}
+          Our team will be in touch within 24-48 hours.
+        </p>
+      </div>
+    </div>
+    {% else %}
+    <!-- ============== ACTIVE STATE ============== -->
+    <div class="credit-card">
+      <div class="credit-card-body">
+        <div class="step-stack">
+
+          <!-- Step 1: IDIQ signup -->
+          <div class="step-block">
+            <div class="step-marker">1</div>
+            <h3>Create your IDIQ account</h3>
+            <p>
+              We run a <strong style="color:#fde68a;">soft credit pull</strong> through IDIQ — it won't affect your score
+              and is only visible to you. Click below to create your IDIQ account (opens in a new tab).
+            </p>
+            <a class="btn-credit" href="{{ idiq_signup_url }}" target="_blank" rel="noopener noreferrer">
+              Open IDIQ Signup
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M7 17L17 7M17 7H8M17 7V16"/>
+              </svg>
+            </a>
+          </div>
+
+          <!-- Step 2: credentials capture -->
+          <div class="step-block">
+            <div class="step-marker">2</div>
+            <h3>Share your IDIQ login</h3>
+            <p>
+              Once your account is created, enter the username and password here. We encrypt the password before storing it —
+              only authorized underwriters can decrypt it to run your soft pull.
+            </p>
+
+            {% if idiq_already_saved %}
+            <div style="margin:0 0 14px;">
+              <span class="credit-pill">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                Credentials on file — update below if needed
+              </span>
+            </div>
+            {% endif %}
+
+            <form class="creds-form" action="{{ url_for('credit_setup_credentials') }}" method="POST" autocomplete="off">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+              <div class="grid cols-2">
+                <div class="field">
+                  <label>IDIQ Username / Email</label>
+                  <input name="idiq_username" autocomplete="off" />
+                </div>
+                <div class="field">
+                  <label>IDIQ Password</label>
+                  <input type="password" name="idiq_password" autocomplete="new-password" />
+                </div>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn-credit">Save &amp; Finish</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <p class="info-note">
+          <strong style="color:#fde68a;">Why this step?</strong>
+          Lenders need to assess credit before approving financing. Using IDIQ for a soft pull keeps the inquiry off
+          your public credit report and gives you ongoing credit monitoring as a bonus.
+        </p>
+      </div>
+    </div>
+    {% endif %}
+  </main>
+
+  <script>
+    // Prevent navigating back to anything — including the original wizard.
+    // The merchant should only see the credit setup view on this revisit.
+    try {
+      history.pushState(null, '', location.href);
+      window.addEventListener('popstate', function () { history.go(1); });
+    } catch (e) {}
+
+    // Confetti celebration on the done state.
+    (function () {
+      const c = document.getElementById('confetti');
+      if (!c) return;
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+      const ctx = c.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      function resize() {
+        c.width = window.innerWidth * dpr;
+        c.height = window.innerHeight * dpr;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.scale(dpr, dpr);
+      }
+      resize();
+      window.addEventListener('resize', resize);
+
+      const W = () => window.innerWidth;
+      const H = () => window.innerHeight;
+      // Amber-leaning palette to match the credit-setup theme.
+      const colors = ['#fbbf24', '#f59e0b', '#fde68a', '#a78bfa', '#34d399', '#60a5fa'];
+      const parts = [];
+      const N = 140;
+      for (let i = 0; i < N; i++) {
+        parts.push({
+          x: W() / 2 + (Math.random() - 0.5) * 80,
+          y: H() * 0.32 + (Math.random() - 0.5) * 40,
+          vx: (Math.random() - 0.5) * 8,
+          vy: -(6 + Math.random() * 8),
+          g: 0.18 + Math.random() * 0.08,
+          drag: 0.992,
+          size: 5 + Math.random() * 6,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          rot: Math.random() * Math.PI * 2,
+          vRot: (Math.random() - 0.5) * 0.3,
+          shape: Math.random() < 0.5 ? 'rect' : 'circle',
+        });
+      }
+
+      const start = performance.now();
+      const DURATION = 4200;
+      function tick(now) {
+        const t = now - start;
+        ctx.clearRect(0, 0, W(), H());
+        parts.forEach(p => {
+          p.vx *= p.drag;
+          p.vy = p.vy * p.drag + p.g;
+          p.x += p.vx;
+          p.y += p.vy;
+          p.rot += p.vRot;
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(p.rot);
+          ctx.fillStyle = p.color;
+          ctx.globalAlpha = Math.max(0, 1 - (t / DURATION));
+          if (p.shape === 'rect') {
+            ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+          } else {
+            ctx.beginPath();
+            ctx.arc(0, 0, p.size / 2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        });
+        if (t < DURATION) requestAnimationFrame(tick);
+        else ctx.clearRect(0, 0, W(), H());
+      }
+      requestAnimationFrame(tick);
+    })();
+  </script>
+</body>
+</html>
