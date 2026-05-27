@@ -582,7 +582,8 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
     return buffer
 
 
-def _build_email_content(business_name, submission_id, rep_name, attached_files, email_type="new_application"):
+def _build_email_content(business_name, submission_id, rep_name, attached_files, email_type="new_application",
+                          pdf_url=None):
     """Build shared email HTML, plain text, and subject."""
     rep_line = f"Referred by: {rep_name}" if rep_name else "Direct submission (no rep)"
     doc_count = len(attached_files) if attached_files else 0
@@ -592,29 +593,59 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
     if email_type == "docs_update":
         subject = f"Re: {base_subject}"
         alert_text = "Additional Documents Uploaded"
-        attachments_text = f"{doc_count} supporting document(s)"
         body_note = (
             "The applicant has uploaded additional supporting documents for this application. "
             "Please find them attached to this email."
         )
+        pdf_section_html = ""
+        pdf_section_plain = f"Attachments: {doc_count} supporting document(s)\n"
     elif is_applicant_copy:
         # Customer-facing receipt — friendlier copy, no internal rep details.
         subject = f"Application Received — {business_name}"
         alert_text = "Thanks for your application"
-        attachments_text = "Application PDF"
         body_note = (
             "We've received your business financing application. Our team will review it "
-            "and reach out within 24-48 hours if any additional information is needed. "
-            "A copy of your application is attached for your records."
+            "and reach out within 24-48 hours if any additional information is needed."
         )
+        if pdf_url:
+            pdf_section_html = f"""
+            <!-- PDF download link -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-bottom:20px;">
+              <tr>
+                <td style="padding:16px 18px;">
+                  <p style="margin:0 0 8px;font-size:14px;font-weight:600;color:#166534;">Your Application PDF is Ready</p>
+                  <p style="margin:0 0 12px;font-size:13px;color:#15803d;">A copy of your completed application is available to download. This link expires in 1 hour.</p>
+                  <a href="{pdf_url}" style="display:inline-block;background:#1e40af;color:#ffffff;font-size:13px;font-weight:600;padding:10px 20px;border-radius:6px;text-decoration:none;">Download Application PDF</a>
+                </td>
+              </tr>
+            </table>"""
+            pdf_section_plain = f"\nDownload your application PDF (link expires in 1 hour):\n{pdf_url}\n"
+        else:
+            pdf_section_html = ""
+            pdf_section_plain = ""
     else:
         subject = base_subject
         alert_text = "New Loan Application Received"
-        attachments_text = "Application PDF"
         body_note = (
-            "Please find the complete application summary attached to this email. "
-            "You can also view full details in the admin dashboard."
+            "A new business financing application has been submitted. "
+            "You can view full details in the admin dashboard."
         )
+        if pdf_url:
+            pdf_section_html = f"""
+            <!-- PDF download link -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-bottom:20px;">
+              <tr>
+                <td style="padding:16px 18px;">
+                  <p style="margin:0 0 8px;font-size:14px;font-weight:600;color:#166534;">Application PDF Ready</p>
+                  <p style="margin:0 0 12px;font-size:13px;color:#15803d;">The complete application summary is available to download. This link expires in 1 hour.</p>
+                  <a href="{pdf_url}" style="display:inline-block;background:#1e40af;color:#ffffff;font-size:13px;font-weight:600;padding:10px 20px;border-radius:6px;text-decoration:none;">Download Application PDF</a>
+                </td>
+              </tr>
+            </table>"""
+            pdf_section_plain = f"\nDownload application PDF (link expires in 1 hour):\n{pdf_url}\n"
+        else:
+            pdf_section_html = ""
+            pdf_section_plain = ""
 
     # The Representative row is internal-only — omit from the applicant's copy.
     rep_row_html = "" if is_applicant_copy else f"""<tr>
@@ -667,15 +698,13 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
                 <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;">{submitted}</td>
               </tr>
               {rep_row_html}
-              <tr>
-                <td style="padding:8px 0;color:#64748b;font-size:13px;">Attachments</td>
-                <td style="padding:8px 0;color:#1e293b;font-size:14px;">{attachments_text}</td>
-              </tr>
             </table>
 
             <p style="color:#475569;font-size:14px;line-height:1.6;margin:0 0 20px;">
               {body_note}
             </p>
+
+            {pdf_section_html}
 
           </td>
         </tr>
@@ -699,25 +728,20 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
     plain_text = (
         f"{alert_text}\n\nBusiness: {business_name}\n"
         f"Application ID: {submission_id}\nSubmitted: {submitted}\n"
-        f"{plain_rep_line}\nAttachments: {attachments_text}\n\n"
+        f"{plain_rep_line}"
+        f"{pdf_section_plain}\n"
         "Powered by CROC"
     )
 
     return subject, html_body, plain_text
 
 
-def _send_via_resend(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files,
+def _send_via_resend(to_emails, subject, html_body, plain_text, attached_files,
                      message_id=None, in_reply_to=None):
     """Send email using Resend REST API (works on Railway where SMTP is blocked)."""
     log.info("Sending via Resend API to %s", ', '.join(to_emails))
 
     attachments = []
-    if pdf_buffer:
-        pdf_buffer.seek(0)
-        attachments.append({
-            "filename": f"application_{submission_id}.pdf",
-            "content": base64.b64encode(pdf_buffer.read()).decode(),
-        })
     if attached_files:
         for bp in attached_files:
             try:
@@ -761,7 +785,7 @@ def _send_via_resend(to_emails, subject, html_body, plain_text, pdf_buffer, subm
     return True
 
 
-def _send_via_smtp(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files,
+def _send_via_smtp(to_emails, subject, html_body, plain_text, attached_files,
                    message_id=None, in_reply_to=None):
     """Send email using SMTP (works locally, blocked on some cloud hosts)."""
     log.info("Sending via SMTP to %s (%s:%s)", ', '.join(to_emails), SMTP_HOST, SMTP_PORT)
@@ -780,13 +804,6 @@ def _send_via_smtp(to_emails, subject, html_body, plain_text, pdf_buffer, submis
     alt_part.attach(MIMEText(plain_text, 'plain'))
     alt_part.attach(MIMEText(html_body, 'html'))
     msg.attach(alt_part)
-
-    if pdf_buffer:
-        pdf_buffer.seek(0)
-        pdf_attachment = MIMEApplication(pdf_buffer.read(), _subtype='pdf')
-        pdf_attachment.add_header('Content-Disposition', 'attachment',
-                                  filename=f'application_{submission_id}.pdf')
-        msg.attach(pdf_attachment)
 
     if attached_files:
         for bp in attached_files:
@@ -814,19 +831,13 @@ def _send_via_smtp(to_emails, subject, html_body, plain_text, pdf_buffer, submis
     return True
 
 
-def _send_via_supabase_fn(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files,
+def _send_via_supabase_fn(to_emails, subject, html_body, plain_text, attached_files,
                           message_id=None, in_reply_to=None):
     """Send email via Supabase Edge Function (HTTP relay to bypass Railway SMTP block)."""
     fn_url = f"{SUPABASE_URL}/functions/v1/send-email"
     log.info("Sending via Supabase Edge Function to %s (%s)", ', '.join(to_emails), fn_url)
 
     attachments = []
-    if pdf_buffer:
-        pdf_buffer.seek(0)
-        attachments.append({
-            "filename": f"application_{submission_id}.pdf",
-            "content": base64.b64encode(pdf_buffer.read()).decode(),
-        })
     if attached_files:
         for bp in attached_files:
             try:
@@ -894,7 +905,12 @@ def send_email_with_pdf(
     attached_files: List[str] = None,
     email_type: str = "new_application",
 ):
-    """Send email with PDF + attachments. Priority: Resend → Supabase Edge Fn → SMTP."""
+    """Send email with a signed PDF download link. Priority: Resend → Supabase Edge Fn → SMTP.
+
+    The PDF is uploaded to Supabase Storage and a 1-hour signed URL is embedded
+    in the email body instead of attaching the file directly. This avoids the
+    Gmail 25 MB attachment limit for large applications.
+    """
     if not RESEND_API_KEY and not EMAIL_ENABLED:
         log.warning("EMAIL DISABLED – set RESEND_API_KEY or SMTP credentials. Would send to %s", ', '.join(to_emails))
         return False
@@ -903,8 +919,24 @@ def send_email_with_pdf(
         log.warning("No recipients provided for email")
         return False
 
+    # Upload PDF to Supabase Storage and generate a signed download URL.
+    # Only attempted when a PDF buffer is provided (docs_update emails have none).
+    pdf_url = None
+    if pdf_buffer:
+        try:
+            pdf_storage_path = f"application-pdfs/{submission_id}/application.pdf"
+            pdf_buffer.seek(0)
+            pdf_bytes = pdf_buffer.read()
+            _upload_to_storage(pdf_bytes, pdf_storage_path, "application/pdf")
+            pdf_url = _get_signed_url(pdf_storage_path, SIGNED_URL_EXPIRY)
+            log.info("PDF uploaded to storage and signed URL generated for submission %s", submission_id)
+        except Exception as exc:
+            log.error("Failed to upload PDF to storage for submission %s: %s", submission_id, exc)
+            # Continue without a PDF link rather than aborting the email entirely.
+
     subject, html_body, plain_text = _build_email_content(
-        business_name, submission_id, rep_name, attached_files, email_type=email_type
+        business_name, submission_id, rep_name, attached_files,
+        email_type=email_type, pdf_url=pdf_url,
     )
 
     thread_id = _application_message_id(submission_id)
@@ -917,13 +949,13 @@ def send_email_with_pdf(
         if RESEND_API_KEY:
             return _send_via_resend(
                 to_emails, subject, html_body, plain_text,
-                pdf_buffer, submission_id, attached_files,
+                attached_files,
                 message_id=message_id, in_reply_to=in_reply_to,
             )
         # Supabase Edge Function relay (works on Railway where SMTP is blocked)
         return _send_via_supabase_fn(
             to_emails, subject, html_body, plain_text,
-            pdf_buffer, submission_id, attached_files,
+            attached_files,
             message_id=message_id, in_reply_to=in_reply_to,
         )
     except Exception as e:
@@ -933,7 +965,7 @@ def send_email_with_pdf(
     try:
         return _send_via_smtp(
             to_emails, subject, html_body, plain_text,
-            pdf_buffer, submission_id, attached_files,
+            attached_files,
             message_id=message_id, in_reply_to=in_reply_to,
         )
     except Exception as e:
@@ -1317,8 +1349,9 @@ def submit():
 
             if pdf_buffer:
                 # Read the PDF bytes once. Each background thread gets its own
-                # BytesIO so the two sends can run in parallel without racing
-                # on buffer position.
+                # BytesIO wrapping the same bytes so they can run in parallel.
+                # send_email_with_pdf uploads the PDF to Supabase Storage and
+                # embeds a signed URL in the email body — no attachment is sent.
                 pdf_buffer.seek(0)
                 pdf_bytes = pdf_buffer.read()
 
