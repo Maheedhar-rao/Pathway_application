@@ -1507,6 +1507,43 @@ def upload_documents(sid):
     _saved_types, saved_paths, _failed = _process_uploads(sid, request.files)
     if _failed:
         log.warning("Submission %s had upload failures: %s", sid, _failed)
+
+    if saved_paths:
+        try:
+            app_res = sb.table("applications").select(
+                "business_legal_name, rep_name, rep_email"
+            ).eq("id", sid).execute()
+            row = (app_res.data or [{}])[0]
+            business_name = row.get("business_legal_name") or ""
+            rep_name = row.get("rep_name")
+            rep_email = row.get("rep_email")
+
+            recipients = [TEAM_EMAIL]
+            if rep_email:
+                recipients.append(rep_email)
+
+            def _bg_send_docs(recips, biz, sid_, rname, files):
+                try:
+                    ok = send_email_with_pdf(
+                        to_emails=recips, business_name=biz,
+                        pdf_buffer=None, submission_id=sid_,
+                        rep_name=rname, attached_files=files,
+                        email_type="docs_update",
+                    )
+                    if ok:
+                        _mark_email_sent(sid_, "docs_email_sent_at")
+                except Exception as exc:
+                    log.error("Background docs email failed for %s: %s", sid_, exc)
+
+            threading.Thread(
+                target=_bg_send_docs,
+                args=(recipients, business_name, sid, rep_name, saved_paths),
+                daemon=True,
+            ).start()
+            log.info("Docs follow-up email queued for submission %s → %s", sid, recipients)
+        except Exception as e:
+            log.error("Failed to queue docs email for %s: %s", sid, e)
+
     return jsonify(success=True, saved=_saved_types, failed=_failed)
 
 
