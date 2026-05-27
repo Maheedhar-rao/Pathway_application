@@ -2053,6 +2053,138 @@ def api_resend_credit_link(sid: int):
     return jsonify({"ok": True, "sent_to": to_email})
 
 
+def _get_uploaded_doc_types(sid: int) -> set:
+    """Return the set of doc_type strings already on file for a submission."""
+    res = sb.table("application_files").select("doc_type").eq("application_id", sid).execute()
+    return {r["doc_type"] for r in (res.data or [])}
+
+
+def _email_docs_reminder(sid: int, to_email: str, business_name: str,
+                         missing: list[str]) -> bool:
+    """Send the applicant a reminder listing which documents are still needed."""
+    if not to_email or "@" not in to_email:
+        return False
+
+    token = sign_resume_token(sid)
+    link = url_for("resume_application", token=token, _external=True)
+
+    labels = {
+        "bank_statement": "4 months of business bank statements (PDF)",
+        "voided_check": "Voided check",
+        "id_doc": "Driver's license / government-issued ID",
+    }
+    missing_html = "".join(
+        f'<li style="margin:6px 0;color:#1e293b;font-size:14px;">{labels.get(d, d)}</li>'
+        for d in missing
+    )
+    missing_plain = "\n".join(f"  - {labels.get(d, d)}" for d in missing)
+
+    subject = f"Documents needed — {business_name or 'Your Application'}"
+    html_body = f"""
+<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 0;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.06);">
+        <tr><td style="background:linear-gradient(135deg,#1e40af,#3b82f6);padding:28px 32px;text-align:center;">
+          <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700;">Pathway Catalyst</h1>
+          <p style="margin:6px 0 0;color:#bfdbfe;font-size:13px;">Documents still needed</p>
+        </td></tr>
+        <tr><td style="padding:28px 32px;">
+          <p style="margin:0 0 12px;color:#1e293b;font-size:15px;">Hi{(' ' + business_name) if business_name else ''},</p>
+          <p style="margin:0 0 16px;color:#475569;font-size:14px;line-height:1.6;">
+            We're reviewing your business financing application and still need the following
+            document(s) to move forward:
+          </p>
+          <ul style="margin:0 0 20px;padding-left:20px;">{missing_html}</ul>
+          <p style="margin:0 0 20px;color:#475569;font-size:14px;line-height:1.6;">
+            You can reply directly to this email with the files attached, or use the
+            secure link below. The link is valid for 30 days.
+          </p>
+          <p style="margin:24px 0;text-align:center;">
+            <a href="{link}" style="display:inline-block;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;text-decoration:none;padding:13px 28px;border-radius:8px;font-weight:600;font-size:15px;">
+              Upload Documents
+            </a>
+          </p>
+          <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">
+            If the button doesn't work, copy and paste this URL into your browser:<br>
+            <span style="word-break:break-all;color:#475569;">{link}</span>
+          </p>
+        </td></tr>
+        <tr><td style="background:#f8fafc;padding:18px 32px;border-top:1px solid #e2e8f0;text-align:center;">
+          <p style="margin:0 0 4px;color:#64748b;font-size:12px;">Pathway Catalyst &mdash; See the Pathway. Be the Catalyst.</p>
+          <p style="margin:0;color:#94a3b8;font-size:11px;font-style:italic;">Powered by CROC</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>
+""".strip()
+    plain_text = (
+        f"Hi{(' ' + business_name) if business_name else ''},\n\n"
+        f"We're reviewing your application and still need the following documents:\n\n"
+        f"{missing_plain}\n\n"
+        f"You can reply to this email with the files attached, or use this link "
+        f"(valid 30 days):\n{link}\n\nPowered by CROC"
+    )
+
+    try:
+        if RESEND_API_KEY:
+            return _send_via_resend([to_email], subject, html_body, plain_text,
+                                    None, sid, None,
+                                    message_id=None, in_reply_to=_application_message_id(sid))
+        return _send_via_supabase_fn([to_email], subject, html_body, plain_text,
+                                     None, sid, None,
+                                     message_id=None, in_reply_to=_application_message_id(sid))
+    except Exception:
+        try:
+            return _send_via_smtp([to_email], subject, html_body, plain_text,
+                                  None, sid, None,
+                                  message_id=None, in_reply_to=_application_message_id(sid))
+        except Exception as e:
+            log.error("Docs reminder email failed for sid=%s to=%s: %s", sid, to_email, e)
+            return False
+
+
+@app.route("/api/submissions/<int:sid>/remind-docs", methods=["POST"])
+@admin_required
+def api_remind_docs(sid: int):
+    """Admin-triggered: email the applicant about missing documents.
+    Checks which doc types are already uploaded and reminds about the rest."""
+    body = request.get_json(silent=True) or {}
+    override = (body.get("email") or "").strip().lower()
+
+    res = sb.table("applications").select(
+        "id, business_legal_name, payload"
+    ).eq("id", sid).limit(1).execute()
+    rows = res.data or []
+    if not rows:
+        return jsonify({"error": "Application not found."}), 404
+
+    row = rows[0]
+    payload = row.get("payload") or {}
+    default_email = (payload.get("owner_0_email") or "").strip().lower()
+    to_email = override or default_email
+    if not to_email or "@" not in to_email:
+        return jsonify({"error": "No valid email — provide one in the override field."}), 400
+
+    uploaded = _get_uploaded_doc_types(sid)
+    all_types = ["bank_statement", "voided_check", "id_doc"]
+    missing = [d for d in all_types if d not in uploaded]
+
+    if not missing:
+        return jsonify({"ok": True, "message": "All documents already on file.", "missing": []})
+
+    ok = _email_docs_reminder(
+        sid, to_email,
+        business_name=row.get("business_legal_name") or "",
+        missing=missing,
+    )
+    if not ok:
+        return jsonify({"error": "Failed to send email (check provider config)."}), 500
+    return jsonify({"ok": True, "sent_to": to_email, "missing": missing})
+
+
 @app.route("/api/submissions/<int:sid>")
 @admin_required
 def api_submission_detail(sid: int):
