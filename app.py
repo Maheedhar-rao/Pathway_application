@@ -618,11 +618,13 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
 
 
 def _build_email_content(business_name, submission_id, rep_name, attached_files,
-                         email_type="new_application", resume_url=None):
+                         email_type="new_application", resume_url=None, pdf_url=None):
     """Build shared email HTML, plain text, and subject.
 
     `resume_url` is only rendered for applicant_receipt emails — it links the
     merchant back to the credit-setup page without re-filling the application.
+    `pdf_url`: when set, the PDF was too large to attach and is instead provided
+    as a signed download link embedded in the email body.
     """
     rep_line = f"Referred by: {rep_name}" if rep_name else "Direct submission (no rep)"
     doc_count = len(attached_files) if attached_files else 0
@@ -655,6 +657,22 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
             "Please find the complete application summary attached to this email. "
             "You can also view full details in the admin dashboard."
         )
+
+    # When the PDF is too large to attach, swap in a download-link note.
+    if pdf_url:
+        attachments_text = "Application PDF (download link below)"
+        pdf_link_html = (
+            f'<p style="margin:0 0 20px;">'
+            f'<a href="{pdf_url}" style="display:inline-block;background:#1e40af;color:#ffffff;'
+            f'font-size:14px;font-weight:600;padding:10px 20px;border-radius:6px;'
+            f'text-decoration:none;">&#8681;&nbsp;Download Application PDF</a>'
+            f'<br><span style="font-size:11px;color:#94a3b8;">Link expires in 1 hour.</span>'
+            f'</p>'
+        )
+        pdf_link_plain = f"\nDownload Application PDF: {pdf_url}\n(Link expires in 1 hour)\n"
+    else:
+        pdf_link_html = ""
+        pdf_link_plain = ""
 
     # The Representative row is internal-only — omit from the applicant's copy.
     rep_row_html = "" if is_applicant_copy else f"""<tr>
@@ -742,6 +760,8 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
 
             {resume_cta_html}
 
+            {pdf_link_html}
+
           </td>
         </tr>
 
@@ -771,7 +791,8 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
         f"{alert_text}\n\nBusiness: {business_name}\n"
         f"Application ID: {submission_id}\nSubmitted: {submitted}\n"
         f"{plain_rep_line}\nAttachments: {attachments_text}\n"
-        f"{plain_resume_line}\n"
+        f"{plain_resume_line}"
+        f"{pdf_link_plain}\n"
         "Powered by CROC"
     )
 
@@ -779,8 +800,12 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
 
 
 def _send_via_resend(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files,
-                     message_id=None, in_reply_to=None):
-    """Send email using Resend REST API (works on Railway where SMTP is blocked)."""
+                     message_id=None, in_reply_to=None, pdf_url=None):
+    """Send email using Resend REST API (works on Railway where SMTP is blocked).
+
+    pdf_buffer: BytesIO to attach directly (small PDFs < 25 MB).
+    pdf_url: signed download URL already embedded in html_body/plain_text (large PDFs).
+    """
     log.info("Sending via Resend API to %s", ', '.join(to_emails))
 
     attachments = []
@@ -834,8 +859,12 @@ def _send_via_resend(to_emails, subject, html_body, plain_text, pdf_buffer, subm
 
 
 def _send_via_smtp(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files,
-                   message_id=None, in_reply_to=None):
-    """Send email using SMTP (works locally, blocked on some cloud hosts)."""
+                   message_id=None, in_reply_to=None, pdf_url=None):
+    """Send email using SMTP (works locally, blocked on some cloud hosts).
+
+    pdf_buffer: BytesIO to attach directly (small PDFs < 25 MB).
+    pdf_url: signed download URL already embedded in html_body/plain_text (large PDFs).
+    """
     log.info("Sending via SMTP to %s (%s:%s)", ', '.join(to_emails), SMTP_HOST, SMTP_PORT)
 
     msg = MIMEMultipart('mixed')
@@ -887,8 +916,12 @@ def _send_via_smtp(to_emails, subject, html_body, plain_text, pdf_buffer, submis
 
 
 def _send_via_supabase_fn(to_emails, subject, html_body, plain_text, pdf_buffer, submission_id, attached_files,
-                          message_id=None, in_reply_to=None):
-    """Send email via Supabase Edge Function (HTTP relay to bypass Railway SMTP block)."""
+                          message_id=None, in_reply_to=None, pdf_url=None):
+    """Send email via Supabase Edge Function (HTTP relay to bypass Railway SMTP block).
+
+    pdf_buffer: BytesIO to attach directly (small PDFs < 25 MB).
+    pdf_url: signed download URL already embedded in html_body/plain_text (large PDFs).
+    """
     fn_url = f"{SUPABASE_URL}/functions/v1/send-email"
     log.info("Sending via Supabase Edge Function to %s (%s)", ', '.join(to_emails), fn_url)
 
@@ -957,6 +990,9 @@ def _mark_email_sent(submission_id: int, column: str):
         log.error("Failed to mark %s for %s: %s", column, submission_id, exc)
 
 
+PDF_SIZE_LIMIT = 25 * 1024 * 1024  # 25 MB — Gmail's attachment limit
+
+
 def send_email_with_pdf(
     to_emails: List[str],
     business_name: str,
@@ -967,7 +1003,12 @@ def send_email_with_pdf(
     email_type: str = "new_application",
     resume_url: str = None,
 ):
-    """Send email with PDF + attachments. Priority: Resend → Supabase Edge Fn → SMTP."""
+    """Send email with PDF + attachments. Priority: Resend → Supabase Edge Fn → SMTP.
+
+    PDFs smaller than 25 MB are attached directly for convenience.
+    PDFs >= 25 MB are uploaded to Supabase Storage and sent as a signed
+    download link to avoid hitting Gmail's attachment size limit.
+    """
     if not RESEND_API_KEY and not EMAIL_ENABLED:
         log.warning("EMAIL DISABLED – set RESEND_API_KEY or SMTP credentials. Would send to %s", ', '.join(to_emails))
         return False
@@ -976,9 +1017,46 @@ def send_email_with_pdf(
         log.warning("No recipients provided for email")
         return False
 
+    # ── Decide: attach directly or upload and link ──────────────────────────
+    pdf_url: Optional[str] = None
+    send_buffer: Optional[BytesIO] = None
+
+    if pdf_buffer is not None:
+        pdf_buffer.seek(0)
+        pdf_bytes = pdf_buffer.read()
+        pdf_size = len(pdf_bytes)
+
+        if pdf_size < PDF_SIZE_LIMIT:
+            # Small PDF — attach directly (original behaviour).
+            log.info(
+                "PDF for submission %s is %d bytes (< 25 MB) — attaching directly",
+                submission_id, pdf_size,
+            )
+            send_buffer = BytesIO(pdf_bytes)
+        else:
+            # Large PDF — upload to storage and embed a signed link.
+            log.info(
+                "PDF for submission %s is %d bytes (>= 25 MB) — uploading to storage",
+                submission_id, pdf_size,
+            )
+            try:
+                bucket_path = f"pdfs/{submission_id}/application_{submission_id}.pdf"
+                _upload_to_storage(pdf_bytes, bucket_path)
+                pdf_url = _get_signed_url(bucket_path)
+                log.info("Signed URL generated for submission %s", submission_id)
+            except Exception as exc:
+                log.error(
+                    "Storage upload failed for submission %s: %s — falling back to direct attach",
+                    submission_id, exc,
+                )
+                # Graceful fallback: try to attach anyway even if it may be
+                # rejected by the mail provider.
+                send_buffer = BytesIO(pdf_bytes)
+                pdf_url = None
+
     subject, html_body, plain_text = _build_email_content(
         business_name, submission_id, rep_name, attached_files,
-        email_type=email_type, resume_url=resume_url,
+        email_type=email_type, resume_url=resume_url, pdf_url=pdf_url,
     )
 
     thread_id = _application_message_id(submission_id)
@@ -991,14 +1069,16 @@ def send_email_with_pdf(
         if RESEND_API_KEY:
             return _send_via_resend(
                 to_emails, subject, html_body, plain_text,
-                pdf_buffer, submission_id, attached_files,
+                send_buffer, submission_id, attached_files,
                 message_id=message_id, in_reply_to=in_reply_to,
+                pdf_url=pdf_url,
             )
         # Supabase Edge Function relay (works on Railway where SMTP is blocked)
         return _send_via_supabase_fn(
             to_emails, subject, html_body, plain_text,
-            pdf_buffer, submission_id, attached_files,
+            send_buffer, submission_id, attached_files,
             message_id=message_id, in_reply_to=in_reply_to,
+            pdf_url=pdf_url,
         )
     except Exception as e:
         log.error("Primary email method failed: %s – falling back to SMTP", e)
@@ -1007,8 +1087,9 @@ def send_email_with_pdf(
     try:
         return _send_via_smtp(
             to_emails, subject, html_body, plain_text,
-            pdf_buffer, submission_id, attached_files,
+            send_buffer, submission_id, attached_files,
             message_id=message_id, in_reply_to=in_reply_to,
+            pdf_url=pdf_url,
         )
     except Exception as e:
         log.error("SMTP fallback also failed for %s: %s\n%s", ', '.join(to_emails), e, traceback.format_exc())
