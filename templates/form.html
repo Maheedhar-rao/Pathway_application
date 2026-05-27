@@ -61,9 +61,9 @@
       <div class="step-connector"></div>
       <div class="step" data-step="2"><span class="step-num">2</span><span>Business</span></div>
       <div class="step-connector"></div>
-      <div class="step" data-step="3"><span class="step-num">3</span><span>Owner 1</span></div>
+      <div class="step" data-step="3"><span class="step-num">3</span><span>Primary Owner</span></div>
       <div class="step-connector"></div>
-      <div class="step" data-step="4"><span class="step-num">4</span><span>Owner 2</span></div>
+      <div class="step" data-step="4"><span class="step-num">4</span><span>Second Owner</span></div>
       <div class="step-connector"></div>
       <div class="step" data-step="5"><span class="step-num">5</span><span>Documents</span></div>
       <div class="step-connector"></div>
@@ -264,10 +264,10 @@
         </div>
       </div>
 
-      <!-- ============== PAGE 3 — Owner 1 Info ============== -->
+      <!-- ============== PAGE 3 — Primary Owner Info ============== -->
       <div class="form-page card" data-page="3">
         <div class="card-header">
-          <h2>Owner 1 Information</h2>
+          <h2>Primary Owner Information</h2>
           <span class="pill">Step 3 of 7</span>
         </div>
         <div class="card-body">
@@ -359,7 +359,7 @@
             </div>
           </div>
 
-          <div class="section-title"><span class="dot"></span><h3>Owner 1 Signature</h3></div>
+          <div class="section-title"><span class="dot"></span><h3>Primary Owner Signature</h3></div>
           <div class="signature-section">
             <div class="grid cols-2" style="gap:20px;align-items:start;">
               <div class="field">
@@ -391,10 +391,10 @@
         </div>
       </div>
 
-      <!-- ============== PAGE 4 — Owner 2 (Optional) ============== -->
+      <!-- ============== PAGE 4 — Second Owner (Optional) + Authorization ============== -->
       <div class="form-page card" data-page="4">
         <div class="card-header">
-          <h2>Owner 2 Information</h2>
+          <h2>Second Owner Information</h2>
           <span class="pill">Step 4 of 7 — Optional</span>
         </div>
         <div class="card-body">
@@ -416,7 +416,7 @@
           </div>
 
           <div id="owner1Section" style="display:none;">
-            <div class="section-title"><span class="dot"></span><h3>Owner 2 — Personal &amp; Ownership</h3></div>
+            <div class="section-title"><span class="dot"></span><h3>Second Owner — Personal &amp; Ownership</h3></div>
             <div class="grid cols-3">
               <div class="field"><label>First Name</label>
                 <input name="owner_1_first" value="{{ (form.get('owner_1_first') if form else '') }}" /></div>
@@ -439,7 +439,7 @@
                        value="{{ (form.get('owner_1_mobile') if form else '') }}" /></div>
             </div>
 
-            <div class="section-title"><span class="dot"></span><h3>Owner 2 — Home Address</h3></div>
+            <div class="section-title"><span class="dot"></span><h3>Second Owner — Home Address</h3></div>
             <div class="grid cols-3">
               <div class="field"><label>Street</label>
                 <input name="owner_1_addr1" list="addr_suggestions" autocomplete="street-address"
@@ -459,7 +459,7 @@
                 <input name="owner_1_country" value="{{ (form.get('owner_1_country') if form else 'United States') }}" /></div>
             </div>
 
-            <div class="section-title"><span class="dot"></span><h3>Owner 2 — Credit (optional)</h3></div>
+            <div class="section-title"><span class="dot"></span><h3>Second Owner — Credit (optional)</h3></div>
             <div class="grid cols-3">
               <div class="field"><label>FICO</label>
                 <input type="number" name="owner_1_fico" min="300" max="850"
@@ -471,7 +471,7 @@
                 <div class="helper" style="opacity:.7;font-size:.9rem;margin-top:10px;">Optional</div></div>
             </div>
 
-            <div class="section-title"><span class="dot"></span><h3>Owner 2 Signature</h3></div>
+            <div class="section-title"><span class="dot"></span><h3>Second Owner Signature</h3></div>
             <div class="signature-section">
               <div class="grid cols-2" style="gap:20px;align-items:start;">
                 <div class="field">
@@ -494,48 +494,6 @@
                            value="{{ (form.get('owner_1_signature_print_name') if form else '') }}" />
                   </div>
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="actions">
-          <button type="button" class="btn ghost" data-nav="prev">Back</button>
-          <button type="button" class="btn primary" data-nav="next">Next</button>
-        </div>
-      </div>
-
-      <!-- ============== PAGE 5 — Documents + Authorization + Submit ============== -->
-      <div class="form-page card" data-page="5">
-        <div class="card-header">
-          <h2>Documents &amp; Authorization</h2>
-          <span class="pill">Step 5 of 7</span>
-        </div>
-        <div class="card-body">
-          <div class="section-title"><span class="dot"></span><h3>Supporting Documents (optional)</h3></div>
-          <p style="margin:0 0 16px;color:var(--muted);font-size:14px;line-height:1.5;">
-            Attaching these files now speeds up review. You can also skip and email them later — your application will still submit.
-          </p>
-
-          <div class="field" style="margin-bottom:16px;">
-            <label>4 Months Business Bank Statements (PDF)</label>
-            <div class="uploader" id="bank-uploader" style="padding:16px;">
-              <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Add PDFs one at a time or all at once — drag &amp; drop works too.</p>
-              <input type="file" id="bank-files-input" name="bank_files" accept="application/pdf" multiple />
-              <div id="bank-files-list" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center;"></div>
-            </div>
-          </div>
-
-          <div class="grid cols-2">
-            <div class="field">
-              <label>Driver's License (optional)</label>
-              <div class="uploader" style="padding:16px;">
-                <input type="file" name="id_doc" accept="application/pdf,image/*" />
-              </div>
-            </div>
-            <div class="field">
-              <label>Voided Check (optional)</label>
-              <div class="uploader" style="padding:16px;">
-                <input type="file" name="voided_check" accept="application/pdf,image/*" />
               </div>
             </div>
           </div>
@@ -569,6 +527,50 @@
               Electronic Signatures in Global and National Commerce Act (E-SIGN) of 2000.</span>
             </label>
           </div>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn ghost" data-nav="prev">Back</button>
+          <button type="button" class="btn primary" id="submitAppBtn" data-nav="submit-app">Next</button>
+        </div>
+      </div>
+
+      <input type="hidden" name="submission_id" id="submissionId" value="" />
+
+      <!-- ============== PAGE 5 — Documents (optional) ============== -->
+      <div class="form-page card" data-page="5">
+        <div class="card-header">
+          <h2>Supporting Documents</h2>
+          <span class="pill">Step 5 of 7 — Optional</span>
+        </div>
+        <div class="card-body">
+          <div class="section-title"><span class="dot"></span><h3>Upload Documents</h3></div>
+          <p style="margin:0 0 16px;color:var(--muted);font-size:14px;line-height:1.5;">
+            Attaching these files now speeds up review. You can also skip and email them later.
+          </p>
+
+          <div class="field" style="margin-bottom:16px;">
+            <label>4 Months Business Bank Statements (PDF)</label>
+            <div class="uploader" id="bank-uploader" style="padding:16px;">
+              <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Add PDFs one at a time or all at once — drag &amp; drop works too.</p>
+              <input type="file" id="bank-files-input" name="bank_files" accept="application/pdf" multiple />
+              <div id="bank-files-list" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center;"></div>
+            </div>
+          </div>
+
+          <div class="grid cols-2">
+            <div class="field">
+              <label>Driver's License (optional)</label>
+              <div class="uploader" style="padding:16px;">
+                <input type="file" name="id_doc" accept="application/pdf,image/*" />
+              </div>
+            </div>
+            <div class="field">
+              <label>Voided Check (optional)</label>
+              <div class="uploader" style="padding:16px;">
+                <input type="file" name="voided_check" accept="application/pdf,image/*" />
+              </div>
+            </div>
+          </div>
 
           <p style="margin:14px 0 0;color:var(--muted);font-size:13px;line-height:1.5;">
             Next, we'll walk you through linking a credit account so we can run a
@@ -577,9 +579,7 @@
         </div>
         <div class="actions">
           <button type="button" class="btn ghost" data-nav="prev">Back</button>
-          <button type="submit" class="btn primary" id="submitBtn">
-            <span>Next</span>
-          </button>
+          <button type="button" class="btn primary" id="uploadDocsBtn" data-nav="upload-docs">Next</button>
         </div>
       </div>
     </form>
@@ -657,7 +657,7 @@
           if (toggle && toggle.value === 'Yes') {
             const sig2 = window.__owner1SignaturePad;
             if (sig2 && !sig2.isSigned()) {
-              alert('Please have the second owner sign the application before continuing.');
+              alert('Please have the Second Owner sign the application before continuing.');
               sig2.canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
               return false;
             }
@@ -676,27 +676,86 @@
           if (current < totalPages) show(current + 1);
         } else if (dir === 'prev') {
           if (current > 1) show(current - 1);
+        } else if (dir === 'submit-app') {
+          if (!validateCurrentPage()) return;
+          submitApplicationData(btn);
+        } else if (dir === 'upload-docs') {
+          uploadDocuments();
         }
       });
 
-      // Final submit safety: ensure required pads are signed even if user
-      // somehow bypasses page validation (e.g. browser back/forward).
+      function submitApplicationData(btn) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        const fd = new FormData(form);
+        // Remove file inputs — we only send form fields
+        fd.delete('bank_files');
+        fd.delete('id_doc');
+        fd.delete('voided_check');
+        fetch('{{ url_for("submit_application") }}', {
+          method: 'POST',
+          body: fd,
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          btn.disabled = false;
+          btn.classList.remove('loading');
+          if (data.success) {
+            document.getElementById('submissionId').value = data.submission_id;
+            window.__submissionId = data.submission_id;
+            show(current + 1);
+          } else {
+            alert(data.error || 'Something went wrong. Please try again.');
+          }
+        })
+        .catch(function () {
+          btn.disabled = false;
+          btn.classList.remove('loading');
+          alert('Network error — please check your connection and try again.');
+        });
+      }
+
+      function uploadDocuments() {
+        var sid = window.__submissionId || document.getElementById('submissionId').value;
+        if (!sid) { show(current + 1); return; }
+        var fd = new FormData();
+        var bankInput = document.getElementById('bank-files-input');
+        var idDoc = form.querySelector('input[name="id_doc"]');
+        var voidedCheck = form.querySelector('input[name="voided_check"]');
+        var hasFiles = false;
+        if (bankInput && bankInput.files.length) {
+          for (var i = 0; i < bankInput.files.length; i++) {
+            fd.append('bank_files', bankInput.files[i]);
+            hasFiles = true;
+          }
+        }
+        if (idDoc && idDoc.files.length) { fd.append('id_doc', idDoc.files[0]); hasFiles = true; }
+        if (voidedCheck && voidedCheck.files.length) { fd.append('voided_check', voidedCheck.files[0]); hasFiles = true; }
+        if (!hasFiles) {
+          window.location.href = '{{ url_for("thank_you") }}?sid=' + sid;
+          return;
+        }
+        var btn = document.getElementById('uploadDocsBtn');
+        btn.disabled = true;
+        btn.classList.add('loading');
+        fd.append('csrf_token', form.querySelector('input[name="csrf_token"]').value);
+        fetch('/upload-documents/' + sid, { method: 'POST', body: fd })
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            btn.disabled = false;
+            btn.classList.remove('loading');
+            window.location.href = '{{ url_for("thank_you") }}?sid=' + sid;
+          })
+          .catch(function () {
+            btn.disabled = false;
+            btn.classList.remove('loading');
+            window.location.href = '{{ url_for("thank_you") }}?sid=' + sid;
+          });
+      }
+
+      // Prevent default form submit — everything is handled via AJAX now
       form.addEventListener('submit', function (e) {
-        const primary = window.__primarySignaturePad;
-        if (primary && !primary.isSigned()) {
-          e.preventDefault();
-          alert('Please sign the application before submitting.');
-          show(3);
-          return false;
-        }
-        const toggle = document.getElementById('has_owner_1');
-        const secondary = window.__owner1SignaturePad;
-        if (toggle && toggle.value === 'Yes' && secondary && !secondary.isSigned()) {
-          e.preventDefault();
-          alert('Please have the second owner sign the application before submitting.');
-          show(4);
-          return false;
-        }
+        e.preventDefault();
       });
 
       // If we re-rendered with server-side errors, jump to the first page that

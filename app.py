@@ -1364,6 +1364,152 @@ def thank_you():
     )
 
 # -------------------- Submission Endpoints --------------------
+@app.route("/submit-application", methods=["POST"])
+def submit_application():
+    """AJAX endpoint: receives form fields (no files), validates, inserts into
+    Supabase, fires PDF/email in background, returns JSON {success, submission_id}."""
+    form = {k: (v.strip() if isinstance(v, str) else v) for k, v in request.form.items()}
+
+    rep_code = form.get("rep_code", "").strip()
+    rep_sig = form.get("rep_sig", "").strip()
+    if rep_code and not verify_rep_code(rep_code, rep_sig):
+        rep_code = ""
+    rep_info = get_rep_info(rep_code)
+
+    if "has_owner_1" not in form or not form.get("has_owner_1"):
+        form["has_owner_1"] = "No"
+
+    for ssn_key in ('owner_0_ssn', 'owner_1_ssn'):
+        raw = form.get(ssn_key, '')
+        digits = re.sub(r'\D', '', raw)
+        if len(digits) == 9:
+            form[ssn_key] = f"{digits[:3]}-{digits[3:5]}-{digits[5:]}"
+    raw_ein = form.get('ein', '')
+    ein_digits = re.sub(r'\D', '', raw_ein)
+    if len(ein_digits) == 9:
+        form['ein'] = f"{ein_digits[:2]}-{ein_digits[2:]}"
+
+    errors = validate_fields(form)
+    if errors:
+        return jsonify(success=False, error="Please fix validation errors and try again.", errors=errors), 400
+
+    business_legal_name = form.get("business_legal_name") or ""
+    industry = form.get("industry") or ""
+    try:
+        loan_amount = float(form.get("loan_amount") or 0)
+    except Exception:
+        loan_amount = 0.0
+
+    owners: List[str] = []
+    first0 = (form.get("owner_0_first") or "").strip()
+    last0 = (form.get("owner_0_last") or "").strip()
+    if first0 or last0:
+        owners.append((first0 + " " + last0).strip())
+    has_owner_1 = (form.get("has_owner_1") or "No").strip()
+    if has_owner_1 == "Yes":
+        first1 = (form.get("owner_1_first") or "").strip()
+        last1 = (form.get("owner_1_last") or "").strip()
+        if first1 or last1:
+            owners.append((first1 + " " + last1).strip())
+
+    business_lookup = lookup_business_sam_gov(
+        business_name=business_legal_name,
+        state_code=form.get("company_state", ""),
+        ein=form.get("ein", ""),
+    )
+    form["business_lookup"] = business_lookup
+    log.info("SAM.gov lookup for '%s' (state=%s): status=%s",
+             business_legal_name, form.get("company_state", ""),
+             business_lookup.get("lookup_status"))
+
+    db_payload = {
+        "business_legal_name": business_legal_name,
+        "industry": industry,
+        "loan_amount": loan_amount,
+        "owners": owners,
+        "payload": form,
+        "ein": form.get("ein"),
+        "business_phone": form.get("business_phone"),
+        "company_website": form.get("company_website"),
+    }
+    if rep_info:
+        db_payload["rep_name"] = rep_info["name"]
+        db_payload["rep_email"] = rep_info["email"]
+
+    ins = sb.table("applications").insert(db_payload).execute()
+    if not ins.data:
+        return jsonify(success=False, error="Database insert failed"), 500
+    submission_id = ins.data[0]["id"]
+
+    if PDF_ENABLED:
+        try:
+            rep_name = rep_info["name"] if rep_info else None
+            log.info("Generating PDF for submission %s (rep=%s)", submission_id, rep_name)
+            pdf_buffer = generate_application_pdf(form, submission_id, rep_name)
+            if pdf_buffer:
+                pdf_buffer.seek(0)
+                pdf_bytes = pdf_buffer.read()
+                recipients = [TEAM_EMAIL]
+                if rep_info and rep_info["email"]:
+                    recipients.append(rep_info["email"])
+
+                def _bg_send_team(recips, biz, sid, rname):
+                    try:
+                        ok = send_email_with_pdf(
+                            to_emails=recips, business_name=biz,
+                            pdf_buffer=BytesIO(pdf_bytes), submission_id=sid,
+                            rep_name=rname, attached_files=[],
+                        )
+                        if ok:
+                            _mark_email_sent(sid, "initial_email_sent_at")
+                    except Exception as exc:
+                        log.error("Background team email failed for %s: %s", sid, exc)
+
+                threading.Thread(
+                    target=_bg_send_team,
+                    args=(recipients, business_legal_name, submission_id, rep_name),
+                    daemon=True,
+                ).start()
+                log.info("Team email queued for submission %s → %s", submission_id, recipients)
+
+                applicant_email = (form.get("owner_0_email") or "").strip()
+                if applicant_email and "@" in applicant_email:
+                    resume_token = sign_resume_token(submission_id)
+                    resume_url = url_for("resume_application", token=resume_token, _external=True)
+
+                    def _bg_send_applicant(to_email, biz, sid, link):
+                        try:
+                            send_email_with_pdf(
+                                to_emails=[to_email], business_name=biz,
+                                pdf_buffer=BytesIO(pdf_bytes), submission_id=sid,
+                                rep_name=None, attached_files=[],
+                                email_type="applicant_receipt",
+                                resume_url=link,
+                            )
+                        except Exception as exc:
+                            log.error("Background applicant email failed for %s: %s", sid, exc)
+
+                    threading.Thread(
+                        target=_bg_send_applicant,
+                        args=(applicant_email, business_legal_name, submission_id, resume_url),
+                        daemon=True,
+                    ).start()
+                    log.info("Applicant receipt queued for submission %s → %s", submission_id, applicant_email)
+        except Exception as e:
+            log.error("Failed to generate PDF for submission %s: %s\n%s", submission_id, e, traceback.format_exc())
+
+    return jsonify(success=True, submission_id=submission_id)
+
+
+@app.route("/upload-documents/<int:sid>", methods=["POST"])
+def upload_documents(sid):
+    """AJAX endpoint: receives file uploads for an existing submission."""
+    _saved_types, saved_paths, _failed = _process_uploads(sid, request.files)
+    if _failed:
+        log.warning("Submission %s had upload failures: %s", sid, _failed)
+    return jsonify(success=True, saved=_saved_types, failed=_failed)
+
+
 @app.route("/submit", methods=["POST"])
 def submit():
     # Normalize request.form into a clean dict

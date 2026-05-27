@@ -102,16 +102,7 @@
   bindRegexValidation('input[name="owner_1_mobile"]', PHONE_RE, { isEnabled: isOwner1Enabled, allowBlank: false });
   bindFicoValidation('input[name="owner_1_fico"]', { isEnabled: isOwner1Enabled });
 
-  // Loading state on final submit
   const form = document.getElementById('appForm');
-  const submitBtn = document.getElementById('submitBtn');
-  if (form && submitBtn) {
-    form.addEventListener('submit', function () {
-      if (!form.checkValidity()) return;
-      submitBtn.classList.add('loading');
-      submitBtn.disabled = true;
-    });
-  }
 
   // Local address suggestions (datalist)
   const KEY = "pc_addr_suggestions_v1";
