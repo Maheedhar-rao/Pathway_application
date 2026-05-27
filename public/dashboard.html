@@ -155,6 +155,9 @@
       <div class="modal-header">
         <h3 id="modalTitle">Submission</h3>
         <div style="display:flex;gap:8px;">
+          <button class="btn ghost" id="downloadPdfBtn" onclick="downloadPdf()" title="Download application as PDF">
+            ⬇ Download PDF
+          </button>
           <button class="btn ghost" id="resendCreditBtn" onclick="openResendModal()" title="Resend credit-setup link">
             ✉ Resend credit link
           </button>
@@ -374,6 +377,11 @@
     const m = document.getElementById('detailModal');
     m.classList.remove('open');
     m.setAttribute('aria-hidden', 'true');
+  }
+
+  function downloadPdf() {
+    if (!activeSubmission) return;
+    window.open(`/api/submissions/${activeSubmission.id}/pdf`, '_blank');
   }
 
   // ── Resend credit-setup link ─────────────────────────────────────────────

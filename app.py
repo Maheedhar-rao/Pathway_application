@@ -46,7 +46,7 @@ from functools import wraps
 
 from flask import (
     Flask, request, redirect, url_for, render_template, jsonify,
-    send_from_directory, abort, session
+    send_from_directory, send_file, abort, session
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash
@@ -1815,6 +1815,30 @@ def api_submission_detail(sid: int):
 
     app_row["files"] = files
     return jsonify(app_row)
+
+
+@app.route("/api/submissions/<int:sid>/pdf")
+@admin_required
+def api_submission_pdf(sid: int):
+    if not PDF_ENABLED:
+        abort(501, description="PDF generation is not available on this server.")
+    app_res = sb.table("applications").select(
+        "id, created_at, payload, rep_name"
+    ).eq("id", sid).execute()
+    rows = app_res.data or []
+    if not rows:
+        abort(404)
+    row = rows[0]
+    payload = row.get("payload") or {}
+    pdf_buf = generate_application_pdf(payload, row["id"], row.get("rep_name"))
+    if pdf_buf is None:
+        abort(500, description="PDF generation failed.")
+    pdf_buf.seek(0)
+    biz = payload.get("business_legal_name", "application")
+    safe_name = re.sub(r"[^A-Za-z0-9_\- ]", "", biz).strip().replace(" ", "_") or "application"
+    filename = f"Pathway_Application_{row['id']}_{safe_name}.pdf"
+    return send_file(pdf_buf, mimetype="application/pdf", as_attachment=True, download_name=filename)
+
 
 _REP_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
