@@ -78,6 +78,25 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
 
+# ── Process timezone ───────────────────────────────────────────────────────
+# The business runs on Eastern, and this app stamps a human-readable
+# "Submitted" time onto the notification email and the application PDF using a
+# bare datetime.now(). On Railway that clock is UTC, so a merchant applying at
+# 2:41 PM ET had "06:41 PM" printed on their confirmation, and anyone applying
+# after 8 PM ET got the *next day's* date. Default the zone here rather than
+# depend on a dashboard variable being set, but let an explicit TZ win.
+os.environ.setdefault("TZ", "America/New_York")
+if hasattr(time, "tzset"):          # no-op on Windows
+    time.tzset()
+    if time.tzname[0] in ("UTC", "GMT") and os.environ["TZ"] not in ("UTC", "GMT"):
+        # A slim base image with no tz database makes the setting a silent
+        # no-op; fail loudly instead of quietly reverting to UTC.
+        raise RuntimeError(
+            f"TZ={os.environ['TZ']!r} did not take effect (process timezone is "
+            f"still {time.tzname[0]}). The tz database is missing from the image."
+        )
+log.info("Process timezone: %s", time.tzname)
+
 load_dotenv(find_dotenv())
 
 APP_DIR = Path(__file__).resolve().parent
@@ -436,7 +455,7 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
 
     # ── Submission meta info ──
     elements.append(Paragraph(f"<b>Application ID:</b> {submission_id}", meta_style))
-    elements.append(Paragraph(f"<b>Submitted:</b> {datetime.now().strftime('%B %d, %Y at %I:%M %p')}", meta_style))
+    elements.append(Paragraph(f"<b>Submitted:</b> {datetime.now().strftime('%B %d, %Y at %I:%M %p ET')}", meta_style))
     if rep_name:
         elements.append(Paragraph(f"<b>Sales Representative:</b> {rep_name}", meta_style))
     elements.append(Spacer(1, 10))
@@ -628,7 +647,9 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
     """
     rep_line = f"Referred by: {rep_name}" if rep_name else "Direct submission (no rep)"
     doc_count = len(attached_files) if attached_files else 0
-    submitted = datetime.now().strftime('%B %d, %Y at %I:%M %p')
+    # Eastern (process TZ is pinned at import). Labelled explicitly — an
+    # unlabelled time is what let the old UTC value read as local for months.
+    submitted = datetime.now().strftime('%B %d, %Y at %I:%M %p ET')
     base_subject = f"New Application: {business_name} (ID: {submission_id})"
     is_applicant_copy = (email_type == "applicant_receipt")
     if email_type == "docs_update":
