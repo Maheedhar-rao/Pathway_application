@@ -1,2 +1,6 @@
 [deploy]
-startCommand = "gunicorn -w 4 -b 0.0.0.0:$PORT app:app"
+# --forwarded-allow-ips='*' is required so gunicorn forwards Railway's
+# X-Forwarded-Proto / X-Forwarded-Host headers to Flask's ProxyFix. Without
+# it gunicorn drops the headers (Railway's edge proxy isn't on 127.0.0.1)
+# and request.host_url falls back to http://, breaking external links.
+startCommand = "gunicorn -w 4 -b 0.0.0.0:$PORT --forwarded-allow-ips='*' app:app"
