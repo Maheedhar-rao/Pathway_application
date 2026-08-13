@@ -78,6 +78,25 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
 
+# ── Process timezone ───────────────────────────────────────────────────────
+# The business runs on Eastern, and this app stamps a human-readable
+# "Submitted" time onto the notification email and the application PDF using a
+# bare datetime.now(). On Railway that clock is UTC, so a merchant applying at
+# 2:41 PM ET had "06:41 PM" printed on their confirmation, and anyone applying
+# after 8 PM ET got the *next day's* date. Default the zone here rather than
+# depend on a dashboard variable being set, but let an explicit TZ win.
+os.environ.setdefault("TZ", "America/New_York")
+if hasattr(time, "tzset"):          # no-op on Windows
+    time.tzset()
+    if time.tzname[0] in ("UTC", "GMT") and os.environ["TZ"] not in ("UTC", "GMT"):
+        # A slim base image with no tz database makes the setting a silent
+        # no-op; fail loudly instead of quietly reverting to UTC.
+        raise RuntimeError(
+            f"TZ={os.environ['TZ']!r} did not take effect (process timezone is "
+            f"still {time.tzname[0]}). The tz database is missing from the image."
+        )
+log.info("Process timezone: %s", time.tzname)
+
 load_dotenv(find_dotenv())
 
 APP_DIR = Path(__file__).resolve().parent
@@ -176,10 +195,21 @@ def verify_resume_token(token: str) -> tuple[Optional[int], str]:
     sid = data.get("sid") if isinstance(data, dict) else None
     return (int(sid) if sid else None), ("ok" if sid else "invalid")
 
+# ---- Client Branding --------------------------------------------------------
+# Client display names keyed by URL slug. Lets links be branded per client via a
+# path segment, e.g. /pathway-catalyst?rep=tom. Display-only — no tracking; the
+# bare /?rep=tom links keep working unchanged.
+CLIENTS = {
+    "pathway-catalyst": "Pathway Catalyst",
+}
+# Slug prepended to the rep links shown on /admin/reps so admins copy the
+# branded URL by default. Set to None to fall back to bare /?rep= links.
+DEFAULT_CLIENT_SLUG = "pathway-catalyst"
+
 # ---- Sales Rep Configuration ------------------------------------------------
 # Reps live in the Supabase `sales_reps` table (see migration
 # 20260512_add_sales_reps.sql). Admins manage them via the /admin/reps page.
-# URL format: /?rep=<code>  e.g., /?rep=tom
+# URL format: /?rep=<code>  e.g., /?rep=tom  (optionally /<client>?rep=<code>)
 _REP_CACHE_TTL = 60  # seconds; bumped explicitly by writes via _invalidate_rep_cache()
 _rep_cache: dict = {"reps": None, "expires_at": 0.0}
 _rep_cache_lock = threading.Lock()
@@ -436,7 +466,7 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
 
     # ── Submission meta info ──
     elements.append(Paragraph(f"<b>Application ID:</b> {submission_id}", meta_style))
-    elements.append(Paragraph(f"<b>Submitted:</b> {datetime.now().strftime('%B %d, %Y at %I:%M %p')}", meta_style))
+    elements.append(Paragraph(f"<b>Submitted:</b> {datetime.now().strftime('%B %d, %Y at %I:%M %p ET')}", meta_style))
     if rep_name:
         elements.append(Paragraph(f"<b>Sales Representative:</b> {rep_name}", meta_style))
     elements.append(Spacer(1, 10))
@@ -628,7 +658,9 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
     """
     rep_line = f"Referred by: {rep_name}" if rep_name else "Direct submission (no rep)"
     doc_count = len(attached_files) if attached_files else 0
-    submitted = datetime.now().strftime('%B %d, %Y at %I:%M %p')
+    # Eastern (process TZ is pinned at import). Labelled explicitly — an
+    # unlabelled time is what let the old UTC value read as local for months.
+    submitted = datetime.now().strftime('%B %d, %Y at %I:%M %p ET')
     base_subject = f"New Application: {business_name} (ID: {submission_id})"
     is_applicant_copy = (email_type == "applicant_receipt")
     if email_type == "docs_update":
@@ -1327,8 +1359,7 @@ def _process_uploads(sid: int, request_files) -> tuple[List[str], List[str], Lis
 
 
 # -------------------- Public Pages --------------------
-@app.route("/")
-def home():
+def _render_form(client_name=None):
     rep_code = request.args.get("rep", "").strip()
     rep_info = get_rep_info(rep_code)
     rep_sig = sign_rep_code(rep_code) if rep_code else ""
@@ -1338,7 +1369,21 @@ def home():
         rep_info=rep_info,
         rep_sig=rep_sig,
         idiq_signup_url=IDIQ_SIGNUP_URL,
+        client_name=client_name,
     )
+
+@app.route("/")
+def home():
+    return _render_form()
+
+@app.route("/<client_slug>")
+def home_client(client_slug):
+    # Branded per-client entry point, e.g. /pathway-catalyst?rep=tom.
+    # Unknown slugs 404 so this doesn't shadow real assets or typo'd URLs.
+    client_name = CLIENTS.get(client_slug.lower().strip())
+    if not client_name:
+        abort(404)
+    return _render_form(client_name=client_name)
 
 @app.route("/thank-you")
 def thank_you():
@@ -2279,6 +2324,7 @@ def api_reps():
     """List sales reps with their unique links. Includes inactive by default for admin view."""
     include_inactive = request.args.get("include_inactive", "1") != "0"
     base_url = request.host_url.rstrip("/")
+    client_path = f"/{DEFAULT_CLIENT_SLUG}" if DEFAULT_CLIENT_SLUG else "/"
     reps = list(_get_reps_cached().values())
     if not include_inactive:
         reps = [r for r in reps if r.get("active", True)]
@@ -2289,7 +2335,7 @@ def api_reps():
             "name": r["name"],
             "email": r["email"],
             "active": r.get("active", True),
-            "link": f"{base_url}/?rep={r['code']}",
+            "link": f"{base_url}{client_path}?rep={r['code']}",
         }
         for r in reps
     ])
