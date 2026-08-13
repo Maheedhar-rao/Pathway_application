@@ -6,3 +6,7 @@ python-dotenv
 supabase
 reportlab>=4.0.0
 cryptography>=42.0.0
+
+# NAICS/SIC classification + Census crosswalk. Public repo, no credentials
+# needed. Canonical home for the keyword rules -- edit them there, not here.
+pathway-naics @ git+https://github.com/Maheedhar-rao/pathway-naics.git@main
