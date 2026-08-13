@@ -1133,7 +1133,7 @@ def send_email_with_pdf(
 
 # ---- Business Lookup (SAM.gov) -----------------------------------------------
 
-def classify_naics(business_name: str, industry: str) -> dict:
+def classify_naics(business_name: str, industry: str, website: str = "") -> dict:
     """Classify the merchant into a NAICS/SIC code and industry bucket.
 
     Stamped onto the application at intake so the code is stored once and stays
@@ -1154,7 +1154,8 @@ def classify_naics(business_name: str, industry: str) -> dict:
         log.info("pathway-naics not installed; skipping NAICS classification")
         return {}
     try:
-        got = pathway_naics.classify(business_name=business_name, industry=industry)
+        got = pathway_naics.classify(business_name=business_name, industry=industry,
+                                     website=website)
     except Exception:
         log.exception("NAICS classification failed for '%s'", business_name)
         return {}
@@ -1510,7 +1511,8 @@ def submit_application():
              business_lookup.get("lookup_status"))
 
     # Industry classification (enrichment - never blocks submission)
-    naics_info = classify_naics(business_legal_name, industry)
+    naics_info = classify_naics(business_legal_name, industry,
+                                form.get("company_website") or "")
     if naics_info:
         form["naics"] = naics_info
         log.info("NAICS for '%s': %s / SIC %s / %s (%s)",
@@ -1719,7 +1721,8 @@ def submit():
              business_lookup.get("lookup_status"))
 
     # Industry classification (enrichment - never blocks submission)
-    naics_info = classify_naics(business_legal_name, industry)
+    naics_info = classify_naics(business_legal_name, industry,
+                                form.get("company_website") or "")
     if naics_info:
         form["naics"] = naics_info
         log.info("NAICS for '%s': %s / SIC %s / %s (%s)",
