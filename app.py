@@ -1130,6 +1130,45 @@ def send_email_with_pdf(
 
 # ---- Business Lookup (SAM.gov) -----------------------------------------------
 
+def classify_naics(business_name: str, industry: str) -> dict:
+    """Classify the merchant into a NAICS/SIC code and industry bucket.
+
+    Stamped onto the application at intake so the code is stored once and stays
+    stable. Underwriting reads it downstream for lender restriction matching and
+    for the SIC field on API submissions; classifying here means the merchant is
+    bucketed the same way at intake and at match time.
+
+    Rules live in the shared `pathway-naics` package, never in this repo -- if
+    the two copies drift, the lender warnings disagree with the stored code.
+
+    Enrichment only: like the SAM.gov lookup above, this must never block a
+    submission. A missing package or a bad row yields {} and the application
+    saves normally; underwriting falls back to classifying on its own side.
+    """
+    try:
+        import pathway_naics
+    except ImportError:
+        log.info("pathway-naics not installed; skipping NAICS classification")
+        return {}
+    try:
+        got = pathway_naics.classify(business_name=business_name, industry=industry)
+    except Exception:
+        log.exception("NAICS classification failed for '%s'", business_name)
+        return {}
+    if not (got.get("naics") or got.get("bucket")):
+        return {}
+    return {
+        "naics": got.get("naics"),
+        "naics_title": got.get("naics_title"),
+        "sic": got.get("sic"),
+        "sic_title": got.get("sic_title"),
+        "bucket": got.get("bucket"),
+        "confidence": got.get("confidence"),
+        "method": got.get("method"),
+        "classifier_version": getattr(pathway_naics, "__version__", None),
+    }
+
+
 def lookup_business_sam_gov(business_name: str, state_code: str, ein: str = "") -> dict:
     """
     Query SAM.gov Entity Management API for business registration data.
@@ -1467,6 +1506,15 @@ def submit_application():
              business_legal_name, form.get("company_state", ""),
              business_lookup.get("lookup_status"))
 
+    # Industry classification (enrichment - never blocks submission)
+    naics_info = classify_naics(business_legal_name, industry)
+    if naics_info:
+        form["naics"] = naics_info
+        log.info("NAICS for '%s': %s / SIC %s / %s (%s)",
+                 business_legal_name, naics_info.get("naics"),
+                 naics_info.get("sic"), naics_info.get("bucket"),
+                 naics_info.get("method"))
+
     db_payload = {
         "business_legal_name": business_legal_name,
         "industry": industry,
@@ -1476,6 +1524,11 @@ def submit_application():
         "ein": form.get("ein"),
         "business_phone": form.get("business_phone"),
         "company_website": form.get("company_website"),
+        # Match keys promoted out of payload for underwriting queries; full
+        # classification detail still lives in payload["naics"].
+        "naics": naics_info.get("naics"),
+        "sic": naics_info.get("sic"),
+        "naics_bucket": naics_info.get("bucket"),
     }
     if rep_info:
         db_payload["rep_name"] = rep_info["name"]
@@ -1662,6 +1715,15 @@ def submit():
              business_legal_name, form.get("company_state", ""),
              business_lookup.get("lookup_status"))
 
+    # Industry classification (enrichment - never blocks submission)
+    naics_info = classify_naics(business_legal_name, industry)
+    if naics_info:
+        form["naics"] = naics_info
+        log.info("NAICS for '%s': %s / SIC %s / %s (%s)",
+                 business_legal_name, naics_info.get("naics"),
+                 naics_info.get("sic"), naics_info.get("bucket"),
+                 naics_info.get("method"))
+
     # Insert into Supabase. IDIQ credentials are collected post-submit on the
     # thank-you page (see /idiq-credentials), so they're left NULL here.
     db_payload = {
@@ -1673,6 +1735,11 @@ def submit():
         "ein": form.get("ein"),
         "business_phone": form.get("business_phone"),
         "company_website": form.get("company_website"),
+        # Match keys promoted out of payload for underwriting queries; full
+        # classification detail still lives in payload["naics"].
+        "naics": naics_info.get("naics"),
+        "sic": naics_info.get("sic"),
+        "naics_bucket": naics_info.get("bucket"),
     }
 
     # Add rep info if available
