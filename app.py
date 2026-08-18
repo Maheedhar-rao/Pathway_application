@@ -25,6 +25,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from io import BytesIO
 from pathlib import Path
 from typing import List, Optional
@@ -78,24 +79,26 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
 
-# ── Process timezone ───────────────────────────────────────────────────────
-# The business runs on Eastern, and this app stamps a human-readable
-# "Submitted" time onto the notification email and the application PDF using a
-# bare datetime.now(). On Railway that clock is UTC, so a merchant applying at
-# 2:41 PM ET had "06:41 PM" printed on their confirmation, and anyone applying
-# after 8 PM ET got the *next day's* date. Default the zone here rather than
-# depend on a dashboard variable being set, but let an explicit TZ win.
+# ── Eastern time ───────────────────────────────────────────────────────────
+# The business runs on Eastern, and this app stamps a human-readable "Submitted"
+# time onto the notification email and the application PDF. We format those with
+# an explicit, timezone-aware datetime (datetime.now(EASTERN)) rather than a bare
+# datetime.now(), so correctness never depends on the process/system clock. The
+# `tzdata` package is pinned in requirements so ZoneInfo resolves even on a slim
+# container with no system tz database.
+#
+# Earlier this relied on pinning the process TZ (os.environ["TZ"] + tzset()).
+# That silently no-oped on Railway -- the platform sets TZ=UTC, so datetime.now()
+# stayed UTC and the "Submitted" line printed the UTC wall clock labelled "ET"
+# (e.g. 12:43 PM ET shown as 04:43 PM ET). ZoneInfo removes that dependency.
+EASTERN = ZoneInfo("America/New_York")
+
+# Still nudge the process TZ for nicer log timestamps, but never fatally -- the
+# ET stamping above no longer depends on it.
 os.environ.setdefault("TZ", "America/New_York")
 if hasattr(time, "tzset"):          # no-op on Windows
     time.tzset()
-    if time.tzname[0] in ("UTC", "GMT") and os.environ["TZ"] not in ("UTC", "GMT"):
-        # A slim base image with no tz database makes the setting a silent
-        # no-op; fail loudly instead of quietly reverting to UTC.
-        raise RuntimeError(
-            f"TZ={os.environ['TZ']!r} did not take effect (process timezone is "
-            f"still {time.tzname[0]}). The tz database is missing from the image."
-        )
-log.info("Process timezone: %s", time.tzname)
+log.info("Process timezone: %s | Eastern zone: %s", time.tzname, EASTERN.key)
 
 load_dotenv(find_dotenv())
 
@@ -466,7 +469,7 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
 
     # ── Submission meta info ──
     elements.append(Paragraph(f"<b>Application ID:</b> {submission_id}", meta_style))
-    elements.append(Paragraph(f"<b>Submitted:</b> {datetime.now().strftime('%B %d, %Y at %I:%M %p ET')}", meta_style))
+    elements.append(Paragraph(f"<b>Submitted:</b> {datetime.now(EASTERN).strftime('%B %d, %Y at %I:%M %p ET')}", meta_style))
     if rep_name:
         elements.append(Paragraph(f"<b>Sales Representative:</b> {rep_name}", meta_style))
     elements.append(Spacer(1, 10))
@@ -658,9 +661,9 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
     """
     rep_line = f"Referred by: {rep_name}" if rep_name else "Direct submission (no rep)"
     doc_count = len(attached_files) if attached_files else 0
-    # Eastern (process TZ is pinned at import). Labelled explicitly — an
-    # unlabelled time is what let the old UTC value read as local for months.
-    submitted = datetime.now().strftime('%B %d, %Y at %I:%M %p ET')
+    # Explicit Eastern (see EASTERN at top) so the stamp is correct regardless
+    # of the process/system clock; labelled ET so it can't read as local time.
+    submitted = datetime.now(EASTERN).strftime('%B %d, %Y at %I:%M %p ET')
     base_subject = f"New Application: {business_name} (ID: {submission_id})"
     is_applicant_copy = (email_type == "applicant_receipt")
     if email_type == "docs_update":

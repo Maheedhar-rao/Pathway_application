@@ -475,11 +475,13 @@
 
         document.getElementById('totalSubmissions').textContent = total;
 
-        // Count today's submissions
-        const today = new Date().toDateString();
-        const todayCount = rows.filter(s =>
-          new Date(s.created_at).toDateString() === today
-        ).length;
+        // Count today's submissions by the Eastern calendar day (the business
+        // runs on ET), not the viewer's timezone -- otherwise a late-evening ET
+        // submission lands on the wrong day for an admin on a UTC machine.
+        const easternDay = (d) =>
+          new Date(d).toLocaleDateString('en-US', { timeZone: 'America/New_York' });
+        const today = easternDay(new Date());
+        const todayCount = rows.filter(s => easternDay(s.created_at) === today).length;
         document.getElementById('todaySubmissions').textContent = todayCount;
 
       } catch (err) {

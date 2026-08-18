@@ -252,6 +252,22 @@
     }
   }
 
+  // created_at is stored in UTC. Render it in Eastern regardless of the
+  // viewer's browser timezone (an admin on a UTC machine was seeing +4h),
+  // so the dashboard matches the "ET" times on the emails and PDFs.
+  function fmtEastern(ts) {
+    if (!ts) return '';
+    try {
+      return new Date(ts).toLocaleString('en-US', {
+        timeZone: 'America/New_York',
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit'
+      }) + ' ET';
+    } catch {
+      return String(ts);
+    }
+  }
+
   function renderRows(data) {
     const rows = (data && data.rows) || [];
     totalRows = (data && data.total) || 0;
@@ -273,7 +289,7 @@
 
       tr.innerHTML = `
         <td>${item.id}</td>
-        <td>${new Date(item.created_at).toLocaleString()}</td>
+        <td>${fmtEastern(item.created_at)}</td>
         <td>${item.business_legal_name || ''}</td>
         <td>${item.industry || ''}</td>
         <td>${fmtMoney(item.loan_amount)}</td>
@@ -330,7 +346,7 @@
 
     body.innerHTML = `
       <div class="kv">
-        <div><strong>Created</strong></div><div>${new Date(data.created_at).toLocaleString()}</div>
+        <div><strong>Created</strong></div><div>${fmtEastern(data.created_at)}</div>
         ${repInfo}
         <div><strong>Business</strong></div><div>${p.business_legal_name || ''}</div>
         <div><strong>Industry</strong></div><div>${p.industry || ''}</div>
