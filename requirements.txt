@@ -18,4 +18,4 @@ tzdata
 # the Railway build image has none, so a git+ pin fails the build. The
 # /archive/refs/tags/<tag>.tar.gz form installs over plain HTTPS and pins the
 # exact released ruleset.
-pathway-naics @ https://github.com/Maheedhar-rao/pathway-naics/archive/refs/tags/v0.2.0.tar.gz
+pathway-naics @ https://github.com/Maheedhar-rao/pathway-naics/archive/refs/tags/v0.3.0.tar.gz
