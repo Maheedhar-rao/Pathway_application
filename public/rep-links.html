@@ -213,6 +213,125 @@
       .edit-fields { grid-template-columns: 1fr; }
     }
 
+    .brand-bar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+      background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02));
+      border: 1px solid var(--border);
+      border-radius: 14px;
+    }
+    .brand-bar label {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .brand-bar select {
+      background: rgba(15,23,42,.55);
+      border: 1px solid rgba(148,163,184,.2);
+      border-radius: 8px;
+      padding: 9px 12px;
+      color: var(--text);
+      font-size: 13px;
+      font-family: inherit;
+      min-width: 200px;
+    }
+    .brand-bar select:focus {
+      outline: none;
+      border-color: rgba(96,165,250,.5);
+    }
+    .brand-preview {
+      flex: 1;
+      min-width: 200px;
+      font-family: monospace;
+      font-size: 12px;
+      color: var(--primary);
+      word-break: break-all;
+    }
+    .brand-warn {
+      width: 100%;
+      font-size: 12px;
+      color: #fcd34d;
+    }
+
+    .brand-panel { display: none; }
+    .brand-panel.open { display: block; }
+    .brand-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 14px 20px;
+      border-bottom: 1px solid rgba(148,163,184,.1);
+    }
+    .brand-item:last-child { border-bottom: none; }
+    .brand-item.inactive { opacity: .55; }
+    .brand-item .rep-info { min-width: 180px; }
+    .brand-domain {
+      flex: 2;
+      min-width: 200px;
+      font-family: monospace;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .brand-domain.set { color: var(--primary); }
+    .pill {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(52,211,153,.15);
+      color: var(--success);
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .new-brand {
+      padding: 18px 20px;
+      border-bottom: 1px solid rgba(148,163,184,.1);
+      display: grid;
+      grid-template-columns: 1fr 1.2fr 1.8fr auto;
+      gap: 10px;
+      align-items: center;
+    }
+    .new-brand input {
+      background: rgba(15,23,42,.55);
+      border: 1px solid rgba(148,163,184,.2);
+      border-radius: 8px;
+      padding: 9px 12px;
+      color: var(--text);
+      font-size: 13px;
+      font-family: inherit;
+      min-width: 0;
+    }
+    .new-brand input:focus {
+      outline: none;
+      border-color: rgba(96,165,250,.5);
+    }
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 26px 0 12px;
+    }
+    .section-head h2 {
+      font-size: 17px;
+      margin: 0;
+      font-weight: 600;
+    }
+    .section-head p {
+      margin: 4px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    @media (max-width: 700px) {
+      .new-brand { grid-template-columns: 1fr; }
+    }
+
     .stats {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -298,14 +417,37 @@
       </div>
     </div>
 
+    <div class="brand-bar" id="brandBar" style="display:none">
+      <label for="brandSelect">Link brand</label>
+      <select id="brandSelect"></select>
+      <div class="brand-preview" id="brandPreview"></div>
+      <div class="brand-warn" id="brandWarn" style="display:none"></div>
+    </div>
+
     <div class="card" id="repList">
       <div style="padding: 40px; text-align: center; color: var(--muted);">Loading...</div>
     </div>
+
+    <div class="section-head">
+      <div>
+        <h2>Branded domains</h2>
+        <p>Point a domain's DNS at this app first — a domain set here goes straight into rep links.</p>
+      </div>
+      <button class="icon-btn" id="toggleBrandsBtn">Manage</button>
+    </div>
+    <div class="card brand-panel" id="brandPanel"></div>
   </div>
 
   <script>
     let csrfToken = '';
     let editingCode = null;
+    let editingBrand = null;
+    let reps = [];
+    let brands = [];
+    // Which brand the copied links use. Remembered per admin so someone who
+    // works one client's reps all day isn't reselecting on every page load.
+    let selectedSlug = localStorage.getItem('repLinkBrand') || '';
+    let appHost = '';
 
     function escapeHtml(s) {
       return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
@@ -343,8 +485,23 @@
     async function loadReps() {
       try {
         const res = await fetch('/api/reps');
-        const reps = await res.json();
+        reps = await res.json();
+        renderReps();
+      } catch (err) {
+        console.error('Failed to load reps:', err);
+      }
+    }
 
+    // Rep links are composed here rather than server-side so switching brands
+    // in the picker is instant and costs no round trip. Falls back to the
+    // server-rendered link if the brand list failed to load.
+    function repLink(rep) {
+      const brand = brands.find(b => b.slug === selectedSlug);
+      return brand ? `${brand.link_base}?rep=${encodeURIComponent(rep.code)}` : rep.link;
+    }
+
+    function renderReps() {
+      try {
         const active = reps.filter(r => r.active);
         document.getElementById('totalReps').textContent = active.length;
 
@@ -366,7 +523,7 @@
         document.getElementById('newRepEmail').addEventListener('keydown', e => { if (e.key === 'Enter') onAddRep(); });
 
       } catch (err) {
-        console.error('Failed to load reps:', err);
+        console.error('Failed to render reps:', err);
       }
     }
 
@@ -399,7 +556,7 @@
             <div class="rep-name">${escapeHtml(rep.name)}</div>
             <div class="rep-email">${escapeHtml(rep.email)}</div>
           </div>
-          <div class="rep-link" id="link-${c}">${escapeHtml(rep.link)}</div>
+          <div class="rep-link" id="link-${c}">${escapeHtml(repLink(rep))}</div>
           <div class="actions">
             <button class="copy-btn" onclick="copyLink('${c}', this)">Copy Link</button>
             <button class="icon-btn" onclick="startEdit('${c}')">Edit</button>
@@ -411,12 +568,12 @@
 
     function startEdit(code) {
       editingCode = code;
-      loadReps();
+      renderReps();
     }
 
     function cancelEdit() {
       editingCode = null;
-      loadReps();
+      renderReps();
     }
 
     async function saveEdit(code) {
@@ -489,6 +646,190 @@
       }
     }
 
+    // ---- Brands -------------------------------------------------------------
+
+    async function loadBrands() {
+      try {
+        const res = await fetch('/api/brands');
+        const data = await res.json();
+        brands = (data && data.brands) || [];
+        appHost = (data && data.app_host) || '';
+        const bar = document.getElementById('brandBar');
+        const warn = document.getElementById('brandWarn');
+
+        if (!brands.length) {
+          bar.style.display = 'none';
+        } else {
+          bar.style.display = 'flex';
+          if (!brands.some(b => b.slug === selectedSlug)) {
+            const def = brands.find(b => b.is_default && b.active) || brands.find(b => b.active) || brands[0];
+            selectedSlug = def.slug;
+          }
+          const sel = document.getElementById('brandSelect');
+          sel.innerHTML = brands.map(b =>
+            `<option value="${escapeHtml(b.slug)}"${b.slug === selectedSlug ? ' selected' : ''}>` +
+            `${escapeHtml(b.name)}${b.active ? '' : ' (inactive)'}</option>`
+          ).join('');
+        }
+
+        if (data && data.configured === false) {
+          warn.textContent = 'Brand table not found — showing the built-in brand only. '
+            + 'Apply migration 20260818_add_client_brands.sql to add more.';
+          warn.style.display = 'block';
+        } else {
+          warn.style.display = 'none';
+        }
+
+        updateBrandPreview();
+        renderBrandPanel();
+      } catch (err) {
+        console.error('Failed to load brands:', err);
+      }
+    }
+
+    function updateBrandPreview() {
+      const brand = brands.find(b => b.slug === selectedSlug);
+      const el = document.getElementById('brandPreview');
+      if (!brand) { el.textContent = ''; return; }
+      el.textContent = brand.domain
+        ? `${brand.link_base}?rep=…`
+        : `${brand.link_base}?rep=…  (no domain set — using this app's address)`;
+    }
+
+    function onBrandChange(e) {
+      selectedSlug = e.target.value;
+      localStorage.setItem('repLinkBrand', selectedSlug);
+      updateBrandPreview();
+      renderReps();
+    }
+
+    function renderBrandPanel() {
+      const panel = document.getElementById('brandPanel');
+      panel.innerHTML = `
+        <div class="new-brand">
+          <input id="newBrandSlug" type="text" placeholder="slug (e.g. croccrm)" autocomplete="off" />
+          <input id="newBrandName" type="text" placeholder="Croc CRM" autocomplete="off" />
+          <input id="newBrandDomain" type="text" placeholder="application.croccrm.com (optional)" autocomplete="off" />
+          <button class="copy-btn" id="addBrandBtn">+ Add Brand</button>
+          <div class="form-error" id="newBrandError" style="display:none"></div>
+        </div>
+        ${brands.map(b => brandRowHtml(b)).join('')}
+      `;
+      document.getElementById('addBrandBtn').addEventListener('click', onAddBrand);
+      ['newBrandSlug', 'newBrandName', 'newBrandDomain'].forEach(id => {
+        document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') onAddBrand(); });
+      });
+    }
+
+    function brandRowHtml(b) {
+      const sl = escapeHtml(b.slug);
+      if (editingBrand === b.slug) {
+        return `
+          <div class="brand-item${b.active ? '' : ' inactive'}">
+            <div class="rep-info">
+              <div class="rep-name">${escapeHtml(b.name)}</div>
+              <div class="rep-email" style="font-family:monospace">${sl}</div>
+            </div>
+            <div class="edit-fields">
+              <input id="edit-brand-name-${sl}" type="text" value="${escapeHtml(b.name)}" />
+              <input id="edit-brand-domain-${sl}" type="text" value="${escapeHtml(b.domain || '')}" placeholder="application.croccrm.com" />
+            </div>
+            <div class="actions">
+              <button class="copy-btn" onclick="saveBrandEdit('${sl}')">Save</button>
+              <button class="icon-btn" onclick="cancelBrandEdit()">Cancel</button>
+            </div>
+          </div>
+        `;
+      }
+      const defaultBtn = (b.is_default || !b.active)
+        ? ''
+        : `<button class="icon-btn" onclick="makeDefaultBrand('${sl}')">Make default</button>`;
+      const deactivateBtn = (b.active && !b.is_default)
+        ? `<button class="icon-btn danger" onclick="deactivateBrand('${sl}', '${escapeHtml(b.name)}')">Deactivate</button>`
+        : '';
+      const domainCell = b.domain
+        ? `<div class="brand-domain set">${escapeHtml(b.domain)}</div>`
+        : `<div class="brand-domain">no domain — /${sl} on ${escapeHtml(appHost)}</div>`;
+      return `
+        <div class="brand-item${b.active ? '' : ' inactive'}">
+          <div class="rep-info">
+            <div class="rep-name">${escapeHtml(b.name)}${b.is_default ? '<span class="pill">default</span>' : ''}</div>
+            <div class="rep-email" style="font-family:monospace">${sl}</div>
+          </div>
+          ${domainCell}
+          <div class="actions">
+            <button class="icon-btn" onclick="startBrandEdit('${sl}')">Edit</button>
+            ${defaultBtn}
+            ${deactivateBtn}
+          </div>
+        </div>
+      `;
+    }
+
+    function startBrandEdit(slug) { editingBrand = slug; renderBrandPanel(); }
+    function cancelBrandEdit() { editingBrand = null; renderBrandPanel(); }
+
+    async function saveBrandEdit(slug) {
+      const name = document.getElementById(`edit-brand-name-${slug}`).value.trim();
+      const domain = document.getElementById(`edit-brand-domain-${slug}`).value.trim();
+      try {
+        await apiWrite(`/api/brands/${encodeURIComponent(slug)}`, 'PATCH', { name, domain });
+        editingBrand = null;
+        await refreshBrands();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function makeDefaultBrand(slug) {
+      try {
+        await apiWrite(`/api/brands/${encodeURIComponent(slug)}`, 'PATCH', { is_default: true });
+        await refreshBrands();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function deactivateBrand(slug, name) {
+      if (!confirm(`Deactivate ${name}? Links already handed out keep working, but it stops being offered here.`)) return;
+      try {
+        await apiWrite(`/api/brands/${encodeURIComponent(slug)}`, 'DELETE');
+        await refreshBrands();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function onAddBrand() {
+      const slugEl = document.getElementById('newBrandSlug');
+      const nameEl = document.getElementById('newBrandName');
+      const domainEl = document.getElementById('newBrandDomain');
+      const errEl = document.getElementById('newBrandError');
+      errEl.style.display = 'none';
+
+      const slug = slugEl.value.trim().toLowerCase();
+      const name = nameEl.value.trim();
+      const domain = domainEl.value.trim();
+      if (!slug || !name) {
+        errEl.textContent = 'Slug and name are required.';
+        errEl.style.display = 'block';
+        return;
+      }
+      try {
+        await apiWrite('/api/brands', 'POST', { slug, name, domain });
+        slugEl.value = nameEl.value = domainEl.value = '';
+        await refreshBrands();
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.style.display = 'block';
+      }
+    }
+
+    async function refreshBrands() {
+      await loadBrands();
+      renderReps();
+    }
+
     function copyLink(code, btn) {
       const linkEl = document.getElementById(`link-${code}`);
       navigator.clipboard.writeText(linkEl.textContent).then(() => {
@@ -501,8 +842,16 @@
       });
     }
 
+    document.getElementById('brandSelect').addEventListener('change', onBrandChange);
+    document.getElementById('toggleBrandsBtn').addEventListener('click', (e) => {
+      const open = document.getElementById('brandPanel').classList.toggle('open');
+      e.target.textContent = open ? 'Hide' : 'Manage';
+    });
+
     (async () => {
       await fetchCsrfToken();
+      // Brands first: rep links are composed from the selected brand's base.
+      await loadBrands();
       loadReps();
       loadStats();
     })();

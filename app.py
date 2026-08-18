@@ -199,20 +199,143 @@ def verify_resume_token(token: str) -> tuple[Optional[int], str]:
     return (int(sid) if sid else None), ("ok" if sid else "invalid")
 
 # ---- Client Branding --------------------------------------------------------
-# Client display names keyed by URL slug. Lets links be branded per client via a
-# path segment, e.g. /pathway-catalyst?rep=tom. Display-only — no tracking; the
-# bare /?rep=tom links keep working unchanged.
-CLIENTS = {
-    "pathway-catalyst": "Pathway Catalyst",
-}
-# Slug prepended to the rep links shown on /admin/reps so admins copy the
-# branded URL by default. Set to None to fall back to bare /?rep= links.
-DEFAULT_CLIENT_SLUG = "pathway-catalyst"
+# Brands are the entry points reps hand to merchants. Each one renders a link
+# two ways, and both keep resolving forever:
+#   * custom domain -> https://application.croccrm.com/?rep=tom
+#   * path slug     -> https://<this app>/pathway-catalyst?rep=tom
+# A client can go live on a slug today and move to a vanity domain later
+# without reissuing a single rep link.
+#
+# Brands live in the Supabase `client_brands` table (migration
+# 20260818_add_client_brands.sql) so admins add a client from /admin/reps
+# without a deploy — same reasoning as sales_reps. Display-only: branding does
+# not change what is submitted or where it lands, and bare /?rep=tom links
+# keep working unchanged.
+_BRAND_CACHE_TTL = 60  # seconds; bumped by writes via _invalidate_brand_cache()
+_brand_cache: dict = {"brands": None, "expires_at": 0.0, "table_ok": True}
+_brand_cache_lock = threading.Lock()
+
+# Used only when `client_brands` is missing or empty — mirrors what was
+# hardcoded here before the table existed, so a deploy that lands ahead of the
+# migration still serves branded /pathway-catalyst links instead of 404ing.
+_FALLBACK_BRANDS = [
+    {"slug": "pathway-catalyst", "name": "Pathway Catalyst", "domain": None,
+     "active": True, "is_default": True},
+]
+
+def _brand_sort_key(b: dict):
+    return (not b.get("is_default"), not b.get("active", True), b.get("name", "").lower())
+
+def _load_brands_from_db() -> list:
+    try:
+        res = sb.table("client_brands").select(
+            "slug, name, domain, active, is_default"
+        ).execute()
+        rows = res.data or []
+    except Exception:
+        # Never fatal: a missing table would otherwise take down the public
+        # form, which only needs a display name.
+        log.exception("client_brands unavailable; using built-in brand")
+        _brand_cache["table_ok"] = False
+        return [dict(b) for b in _FALLBACK_BRANDS]
+    _brand_cache["table_ok"] = True
+    if not rows:
+        return [dict(b) for b in _FALLBACK_BRANDS]
+    out = []
+    for r in rows:
+        slug = (r.get("slug") or "").lower().strip()
+        if not slug:
+            continue
+        out.append({
+            "slug": slug,
+            "name": r.get("name") or slug,
+            "domain": (r.get("domain") or "").lower().strip() or None,
+            "active": bool(r.get("active", True)),
+            "is_default": bool(r.get("is_default", False)),
+        })
+    out.sort(key=_brand_sort_key)
+    return out
+
+def _get_brands_cached() -> list:
+    now = time.time()
+    if _brand_cache["brands"] is not None and now < _brand_cache["expires_at"]:
+        return _brand_cache["brands"]
+    with _brand_cache_lock:
+        if _brand_cache["brands"] is not None and time.time() < _brand_cache["expires_at"]:
+            return _brand_cache["brands"]
+        _brand_cache["brands"] = _load_brands_from_db()
+        _brand_cache["expires_at"] = time.time() + _BRAND_CACHE_TTL
+        return _brand_cache["brands"]
+
+def _invalidate_brand_cache() -> None:
+    with _brand_cache_lock:
+        _brand_cache["brands"] = None
+        _brand_cache["expires_at"] = 0.0
+
+def get_brand_by_slug(slug: str, include_inactive: bool = False) -> Optional[dict]:
+    slug = (slug or "").lower().strip()
+    for b in _get_brands_cached():
+        if b["slug"] == slug and (include_inactive or b["active"]):
+            return b
+    return None
+
+def get_brand_by_host(host: str) -> Optional[dict]:
+    """Match an inbound request host against a brand's custom domain.
+
+    Port is stripped so this works behind the proxy and in local dev; inactive
+    brands still match, because a domain that is live in DNS should keep
+    rendering its own name rather than a competitor's until DNS is cut over.
+    """
+    host = (host or "").lower().strip().split(":")[0]
+    if not host:
+        return None
+    for b in _get_brands_cached():
+        if b["domain"] and b["domain"] == host:
+            return b
+    return None
+
+def get_default_brand() -> Optional[dict]:
+    brands = _get_brands_cached()
+    for b in brands:
+        if b["is_default"] and b["active"]:
+            return b
+    for b in brands:
+        if b["active"]:
+            return b
+    return None
+
+def brand_link_base(brand: Optional[dict]) -> str:
+    """Base URL a rep link is built on: `f"{brand_link_base(b)}?rep={code}"`.
+
+    A brand with a domain owns its root path; one without borrows this app's
+    host and identifies itself with a path segment.
+    """
+    host_base = request.host_url.rstrip("/")
+    if brand and brand.get("domain"):
+        return f"https://{brand['domain']}/"
+    if brand:
+        return f"{host_base}/{brand['slug']}"
+    return f"{host_base}/"
+
+def brand_rep_link(brand: Optional[dict], rep_code: str) -> str:
+    return f"{brand_link_base(brand)}?rep={rep_code}"
+
+def current_brand_name() -> Optional[str]:
+    """Brand for the host this request came in on, for pages with no slug.
+
+    A merchant who started on application.croccrm.com stays on that host
+    through /thank-you, so the name follows them. Path-slug brands can't be
+    recovered here (the slug is only on the entry URL) and fall back to the
+    default, which is what those links rendered before brands existed.
+    """
+    brand = get_brand_by_host(request.host) or get_default_brand()
+    return brand["name"] if brand else None
 
 # ---- Sales Rep Configuration ------------------------------------------------
 # Reps live in the Supabase `sales_reps` table (see migration
 # 20260512_add_sales_reps.sql). Admins manage them via the /admin/reps page.
-# URL format: /?rep=<code>  e.g., /?rep=tom  (optionally /<client>?rep=<code>)
+# URL format: /?rep=<code>  e.g., /?rep=tom. Branded variants resolve to the
+# same form — see Client Branding above for the domain/slug entry points.
 _REP_CACHE_TTL = 60  # seconds; bumped explicitly by writes via _invalidate_rep_cache()
 _rep_cache: dict = {"reps": None, "expires_at": 0.0}
 _rep_cache_lock = threading.Lock()
@@ -1417,16 +1540,19 @@ def _render_form(client_name=None):
 
 @app.route("/")
 def home():
-    return _render_form()
+    # On a brand's own domain (application.croccrm.com) the root path is that
+    # brand's entry point; on this app's own host it falls back to the default.
+    return _render_form(client_name=current_brand_name())
 
 @app.route("/<client_slug>")
 def home_client(client_slug):
-    # Branded per-client entry point, e.g. /pathway-catalyst?rep=tom.
-    # Unknown slugs 404 so this doesn't shadow real assets or typo'd URLs.
-    client_name = CLIENTS.get(client_slug.lower().strip())
-    if not client_name:
+    # Branded per-client entry point, e.g. /pathway-catalyst?rep=tom. Inactive
+    # brands still render so links already in reps' hands don't break; unknown
+    # slugs 404 so this doesn't shadow real assets or typo'd URLs.
+    brand = get_brand_by_slug(client_slug, include_inactive=True)
+    if not brand:
         abort(404)
-    return _render_form(client_name=client_name)
+    return _render_form(client_name=brand["name"])
 
 @app.route("/thank-you")
 def thank_you():
@@ -1443,6 +1569,7 @@ def thank_you():
             idiq_already_saved = bool(rows[0].get("idiq_username"))
     return render_template(
         "thank_you.html",
+        client_name=current_brand_name(),
         sid=sid,
         business=business,
         idiq_signup_url=IDIQ_SIGNUP_URL,
@@ -2396,8 +2523,11 @@ def api_csrf_token():
 def api_reps():
     """List sales reps with their unique links. Includes inactive by default for admin view."""
     include_inactive = request.args.get("include_inactive", "1") != "0"
-    base_url = request.host_url.rstrip("/")
-    client_path = f"/{DEFAULT_CLIENT_SLUG}" if DEFAULT_CLIENT_SLUG else "/"
+    # ?brand=<slug> builds the links on that brand; otherwise the default brand.
+    # The page also recomposes links client-side from /api/brands link_base, so
+    # switching brands in the picker costs no round trip.
+    brand = (get_brand_by_slug(request.args.get("brand", ""), include_inactive=True)
+             or get_default_brand())
     reps = list(_get_reps_cached().values())
     if not include_inactive:
         reps = [r for r in reps if r.get("active", True)]
@@ -2408,7 +2538,7 @@ def api_reps():
             "name": r["name"],
             "email": r["email"],
             "active": r.get("active", True),
-            "link": f"{base_url}{client_path}?rep={r['code']}",
+            "link": brand_rep_link(brand, r["code"]),
         }
         for r in reps
     ])
@@ -2468,6 +2598,184 @@ def api_reps_deactivate(code: str):
         log.warning("Rep deactivate failed: %s", e)
         return jsonify({"error": "Failed to deactivate rep."}), 500
     _invalidate_rep_cache()
+    return jsonify({"ok": True})
+
+_BRAND_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
+_BRANDS_MISSING = ("Branded links are not set up yet. Apply migration "
+                   "20260818_add_client_brands.sql to your Supabase project.")
+
+def _reserved_slugs() -> set:
+    """First path segments already claimed by real routes.
+
+    `/<client_slug>` is a catch-all, so a brand slugged `admin` would hand reps
+    a link that lands on the admin login instead of the form. Read the live URL
+    map rather than a hand-kept list, so a route added later can't be shadowed.
+    """
+    out = {"static"}
+    for rule in app.url_map.iter_rules():
+        head = rule.rule.lstrip("/").split("/")[0]
+        if head and "<" not in head:
+            out.add(head.lower())
+    return out
+
+def _normalize_domain(raw: str) -> tuple[Optional[str], Optional[str]]:
+    """Accept what an admin actually pastes and return a bare host.
+
+    'https://application.croccrm.com/' and 'Application.CrocCRM.com' both
+    normalize to 'application.croccrm.com'. Returns (domain|None, error|None);
+    an empty value is valid and means "use this app's host with a path slug".
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None, None
+    raw = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", raw)  # strip scheme
+    raw = raw.split("/")[0].split("?")[0].split("#")[0]     # strip path/query
+    raw = raw.split("@")[-1].split(":")[0]                  # strip creds/port
+    domain = raw.strip(".").lower()
+    if not domain:
+        return None, None
+    if len(domain) > 253 or not _DOMAIN_RE.match(domain):
+        return None, f"'{raw}' is not a valid domain (expected e.g. application.croccrm.com)."
+    return domain, None
+
+def _validate_brand_payload(data: dict, *, require_slug: bool) -> tuple[Optional[dict], Optional[str]]:
+    """Normalize and validate a brand create/edit payload. Returns (clean, error)."""
+    if not isinstance(data, dict):
+        return None, "Body must be a JSON object."
+    clean = {}
+    if require_slug:
+        slug = (data.get("slug") or "").strip().lower()
+        if not _BRAND_SLUG_RE.match(slug):
+            return None, "Slug must be lowercase alphanumeric (with -/_), 1-64 chars."
+        if slug in _reserved_slugs():
+            return None, f"'{slug}' is reserved by an existing page — pick another slug."
+        clean["slug"] = slug
+    if "name" in data:
+        name = (data.get("name") or "").strip()
+        if not name:
+            return None, "Name is required."
+        clean["name"] = name
+    elif require_slug:
+        return None, "Name is required."
+    if "domain" in data:
+        domain, err = _normalize_domain(data.get("domain"))
+        if err:
+            return None, err
+        clean["domain"] = domain
+    if "active" in data:
+        clean["active"] = bool(data["active"])
+    if "is_default" in data:
+        clean["is_default"] = bool(data["is_default"])
+    return clean, None
+
+def _clear_other_defaults(except_slug: str) -> None:
+    """Only one brand may be default (enforced by a partial unique index)."""
+    sb.table("client_brands").update({"is_default": False}) \
+        .eq("is_default", True).neq("slug", except_slug).execute()
+
+def _brand_conflicting_domain(domain: str, except_slug: str = "") -> Optional[str]:
+    if not domain:
+        return None
+    for b in _get_brands_cached():
+        if b["domain"] == domain and b["slug"] != except_slug:
+            return b["slug"]
+    return None
+
+@app.route("/api/brands", methods=["GET"])
+@admin_required
+def api_brands():
+    """Brands available for rep links, default first.
+
+    `link_base` is what /admin/reps concatenates `?rep=<code>` onto, so the
+    page never has to know how a brand's URL is shaped.
+    """
+    include_inactive = request.args.get("include_inactive", "1") != "0"
+    brands = [b for b in _get_brands_cached() if include_inactive or b["active"]]
+    return jsonify({
+        "configured": bool(_brand_cache.get("table_ok", True)),
+        "app_host": request.host_url.rstrip("/"),
+        "brands": [
+            {**b, "link_base": brand_link_base(b), "example": brand_rep_link(b, "tom")}
+            for b in brands
+        ],
+    })
+
+@app.route("/api/brands", methods=["POST"])
+@admin_required
+def api_brands_create():
+    clean, err = _validate_brand_payload(request.get_json(silent=True) or {}, require_slug=True)
+    if err:
+        return jsonify({"error": err}), 400
+    if get_brand_by_slug(clean["slug"], include_inactive=True):
+        return jsonify({"error": f"Brand '{clean['slug']}' already exists."}), 409
+    dupe = _brand_conflicting_domain(clean.get("domain"), clean["slug"])
+    if dupe:
+        return jsonify({"error": f"Domain already used by brand '{dupe}'."}), 409
+    row = {
+        "slug": clean["slug"],
+        "name": clean["name"],
+        "domain": clean.get("domain"),
+        "active": clean.get("active", True),
+        "is_default": clean.get("is_default", False),
+    }
+    try:
+        if row["is_default"]:
+            _clear_other_defaults(row["slug"])
+        sb.table("client_brands").insert(row).execute()
+    except Exception as e:
+        log.warning("Brand insert failed: %s", e)
+        msg = _BRANDS_MISSING if not _brand_cache.get("table_ok", True) else "Failed to create brand."
+        return jsonify({"error": msg}), 500
+    _invalidate_brand_cache()
+    return jsonify({"ok": True, "slug": row["slug"]}), 201
+
+@app.route("/api/brands/<slug>", methods=["PATCH"])
+@admin_required
+def api_brands_update(slug: str):
+    slug = slug.lower().strip()
+    existing = get_brand_by_slug(slug, include_inactive=True)
+    if not existing:
+        return jsonify({"error": "Brand not found."}), 404
+    clean, err = _validate_brand_payload(request.get_json(silent=True) or {}, require_slug=False)
+    if err:
+        return jsonify({"error": err}), 400
+    clean.pop("slug", None)
+    if not clean:
+        return jsonify({"error": "No fields to update."}), 400
+    if "domain" in clean:
+        dupe = _brand_conflicting_domain(clean["domain"], slug)
+        if dupe:
+            return jsonify({"error": f"Domain already used by brand '{dupe}'."}), 409
+    if clean.get("active") is False and existing["is_default"]:
+        return jsonify({"error": "Make another brand the default before deactivating this one."}), 400
+    try:
+        if clean.get("is_default"):
+            _clear_other_defaults(slug)
+            clean["active"] = True  # the default must be usable
+        sb.table("client_brands").update(clean).eq("slug", slug).execute()
+    except Exception as e:
+        log.warning("Brand update failed: %s", e)
+        return jsonify({"error": "Failed to update brand."}), 500
+    _invalidate_brand_cache()
+    return jsonify({"ok": True})
+
+@app.route("/api/brands/<slug>", methods=["DELETE"])
+@admin_required
+def api_brands_deactivate(slug: str):
+    """Soft-delete: links already handed out keep resolving (see home_client)."""
+    slug = slug.lower().strip()
+    existing = get_brand_by_slug(slug, include_inactive=True)
+    if not existing:
+        return jsonify({"error": "Brand not found."}), 404
+    if existing["is_default"]:
+        return jsonify({"error": "Make another brand the default before deactivating this one."}), 400
+    try:
+        sb.table("client_brands").update({"active": False}).eq("slug", slug).execute()
+    except Exception as e:
+        log.warning("Brand deactivate failed: %s", e)
+        return jsonify({"error": "Failed to deactivate brand."}), 500
+    _invalidate_brand_cache()
     return jsonify({"ok": True})
 
 # -------------------- Admin Login --------------------
