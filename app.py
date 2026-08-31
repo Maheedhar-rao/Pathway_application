@@ -21,6 +21,7 @@ import traceback
 import urllib.parse
 import urllib.request
 import uuid
+from html import escape
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
@@ -128,6 +129,11 @@ SAM_GOV_API_KEY = os.environ.get("SAM_GOV_API_KEY", "")
 
 # Main team email - receives ALL submissions
 TEAM_EMAIL = os.environ.get("TEAM_EMAIL", "team@pathwaycatalyst.com")
+
+# Copied on the rep lead-summary email alongside the referring rep. Blank
+# disables that recipient rather than sending to a placeholder address.
+SUPPORT_EMAIL = os.environ.get("SUPPORT_EMAIL", "").strip()
+PROCESSING_EMAIL = os.environ.get("PROCESSING_EMAIL", "").strip()
 
 # External URL the applicant follows on page 6 to create their IDIQ account.
 # Placeholder until the real partner URL is provisioned.
@@ -774,13 +780,16 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
 
 
 def _build_email_content(business_name, submission_id, rep_name, attached_files,
-                         email_type="new_application", resume_url=None, pdf_url=None):
+                         email_type="new_application", resume_url=None, pdf_url=None,
+                         lead_details=None):
     """Build shared email HTML, plain text, and subject.
 
     `resume_url` is only rendered for applicant_receipt emails — it links the
     merchant back to the credit-setup page without re-filling the application.
     `pdf_url`: when set, the PDF was too large to attach and is instead provided
     as a signed download link embedded in the email body.
+    `lead_details`: (label, value) pairs rendered as extra rows — the
+    rep_lead_summary email carries the lead facts inline instead of a PDF.
     """
     rep_line = f"Referred by: {rep_name}" if rep_name else "Direct submission (no rep)"
     doc_count = len(attached_files) if attached_files else 0
@@ -796,6 +805,14 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
         body_note = (
             "The applicant has uploaded additional supporting documents for this application. "
             "Please find them attached to this email."
+        )
+    elif email_type == "rep_lead_summary":
+        subject = f"New Lead: {business_name} (ID: {submission_id})"
+        alert_text = "New Lead Submitted"
+        attachments_text = ""
+        body_note = (
+            "A new application just came in on your link. The key lead details are "
+            "listed above; the full application PDF is in the separate notification email."
         )
     elif is_applicant_copy:
         # Customer-facing receipt — friendlier copy, no internal rep details.
@@ -836,6 +853,25 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
     rep_row_html = "" if is_applicant_copy else f"""<tr>
                 <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;">Representative</td>
                 <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;">{rep_line}</td>
+              </tr>"""
+
+    # Lead facts (rep_lead_summary only). That email carries its own Business
+    # Name row, so the generic header row is dropped to avoid repeating it, as
+    # is the Attachments row — it has no attachment to name.
+    business_row_html = "" if lead_details else f"""<tr>
+                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;width:140px;">Business</td>
+                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;font-weight:600;">{business_name}</td>
+              </tr>"""
+    lead_rows_html = "".join(
+        f"""<tr>
+                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;">{escape(label)}</td>
+                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;">{escape(value)}</td>
+              </tr>"""
+        for label, value in (lead_details or [])
+    )
+    attachments_row_html = "" if not attachments_text else f"""<tr>
+                <td style="padding:8px 0;color:#64748b;font-size:13px;">Attachments</td>
+                <td style="padding:8px 0;color:#1e293b;font-size:14px;">{attachments_text}</td>
               </tr>"""
 
     # Resume-link CTA for the merchant. Only the applicant receipt gets it.
@@ -893,10 +929,7 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
 
             <!-- Details table -->
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px;">
-              <tr>
-                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;width:140px;">Business</td>
-                <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;font-weight:600;">{business_name}</td>
-              </tr>
+              {business_row_html}
               <tr>
                 <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;">Application ID</td>
                 <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;font-weight:600;">{submission_id}</td>
@@ -905,11 +938,9 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
                 <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px;">Submitted</td>
                 <td style="padding:8px 0;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:14px;">{submitted}</td>
               </tr>
+              {lead_rows_html}
               {rep_row_html}
-              <tr>
-                <td style="padding:8px 0;color:#64748b;font-size:13px;">Attachments</td>
-                <td style="padding:8px 0;color:#1e293b;font-size:14px;">{attachments_text}</td>
-              </tr>
+              {attachments_row_html}
             </table>
 
             <p style="color:#475569;font-size:14px;line-height:1.6;margin:0 0 20px;">
@@ -945,10 +976,16 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
             "\nWant to finish your credit setup later? Use this secure link "
             "(valid 30 days):\n" + resume_url + "\n"
         )
+    plain_lead_lines = "".join(
+        f"{label}: {value}\n" for label, value in (lead_details or [])
+    )
+    plain_attachments_line = f"\nAttachments: {attachments_text}\n" if attachments_text else ""
+    plain_business_line = "" if lead_details else f"Business: {business_name}\n"
     plain_text = (
-        f"{alert_text}\n\nBusiness: {business_name}\n"
+        f"{alert_text}\n\n{plain_business_line}"
         f"Application ID: {submission_id}\nSubmitted: {submitted}\n"
-        f"{plain_rep_line}\nAttachments: {attachments_text}\n"
+        f"{plain_lead_lines}"
+        f"{plain_rep_line}{plain_attachments_line}"
         f"{plain_resume_line}"
         f"{pdf_link_plain}\n"
         "Powered by CROC"
@@ -1160,6 +1197,7 @@ def send_email_with_pdf(
     attached_files: List[str] = None,
     email_type: str = "new_application",
     resume_url: str = None,
+    lead_details: List[tuple] = None,
 ):
     """Send email with PDF + attachments. Priority: Resend → Supabase Edge Fn → SMTP.
 
@@ -1215,6 +1253,7 @@ def send_email_with_pdf(
     subject, html_body, plain_text = _build_email_content(
         business_name, submission_id, rep_name, attached_files,
         email_type=email_type, resume_url=resume_url, pdf_url=pdf_url,
+        lead_details=lead_details,
     )
 
     thread_id = _application_message_id(submission_id)
@@ -1252,6 +1291,100 @@ def send_email_with_pdf(
     except Exception as e:
         log.error("SMTP fallback also failed for %s: %s\n%s", ', '.join(to_emails), e, traceback.format_exc())
         return False
+
+
+# ---- Rep lead-summary email ---------------------------------------------------
+
+def _format_time_in_business(start_date: str) -> str:
+    """Render business_start_date as elapsed time to today, e.g. "3 yrs 2 mos".
+
+    The form supplies an <input type="date"> value (YYYY-MM-DD). Anything
+    unparseable — or a future date — falls back to the raw value so the rep
+    still sees what the merchant entered.
+    """
+    raw = (start_date or "").strip()
+    if not raw:
+        return ""
+    try:
+        started = datetime.strptime(raw[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return raw
+
+    today = datetime.now(EASTERN).date()
+    if started > today:
+        return raw
+
+    months = (today.year - started.year) * 12 + (today.month - started.month)
+    if today.day < started.day:
+        months -= 1
+    months = max(months, 0)
+    years, rem_months = divmod(months, 12)
+
+    parts = []
+    if years:
+        parts.append(f"{years} yr" + ("s" if years != 1 else ""))
+    if rem_months or not years:
+        parts.append(f"{rem_months} mo" + ("s" if rem_months != 1 else ""))
+    return " ".join(parts)
+
+
+def _build_lead_details(form: dict) -> List[tuple]:
+    """The lead facts the rep email carries, as ordered (label, value) pairs."""
+    loan_amt = form.get("loan_amount", "")
+    try:
+        loan_display = f"${float(loan_amt):,.0f}" if loan_amt else ""
+    except (ValueError, TypeError):
+        loan_display = str(loan_amt)
+
+    return [
+        ("Business Name", form.get("business_legal_name", "") or ""),
+        ("First Name", form.get("owner_0_first", "") or ""),
+        ("Last Name", form.get("owner_0_last", "") or ""),
+        ("Phone", form.get("owner_0_mobile", "") or ""),
+        ("Email", form.get("owner_0_email", "") or ""),
+        ("Requested Amount", loan_display),
+        ("Time in Business", _format_time_in_business(form.get("business_start_date", ""))),
+        ("Industry", form.get("industry", "") or ""),
+    ]
+
+
+def _queue_lead_summary_email(form: dict, submission_id: int, rep_info: Optional[dict]):
+    """Fire the plain lead-summary email to the rep, support and processing.
+
+    Sent in the background alongside the PDF notification and never allowed to
+    fail the submission. Recipients with no configured address are skipped.
+    """
+    recipients = []
+    for addr in ((rep_info or {}).get("email"), SUPPORT_EMAIL, PROCESSING_EMAIL):
+        addr = (addr or "").strip()
+        if addr and "@" in addr and addr not in recipients:
+            recipients.append(addr)
+    if not recipients:
+        log.info("No lead-summary recipients for submission %s — skipping", submission_id)
+        return
+
+    business_name = form.get("business_legal_name") or ""
+    rep_name = (rep_info or {}).get("name")
+    lead_details = _build_lead_details(form)
+
+    def _bg_send_lead(recips, biz, sid, rname, details):
+        try:
+            send_email_with_pdf(
+                to_emails=recips, business_name=biz,
+                pdf_buffer=None, submission_id=sid,
+                rep_name=rname, attached_files=[],
+                email_type="rep_lead_summary",
+                lead_details=details,
+            )
+        except Exception as exc:
+            log.error("Background lead summary email failed for %s: %s", sid, exc)
+
+    threading.Thread(
+        target=_bg_send_lead,
+        args=(recipients, business_name, submission_id, rep_name, lead_details),
+        daemon=True,
+    ).start()
+    log.info("Lead summary email queued for submission %s → %s", submission_id, recipients)
 
 
 # ---- Business Lookup (SAM.gov) -----------------------------------------------
@@ -1671,6 +1804,9 @@ def submit_application():
         return jsonify(success=False, error="Database insert failed"), 500
     submission_id = ins.data[0]["id"]
 
+    # Lead summary to rep/support/processing — independent of the PDF pipeline.
+    _queue_lead_summary_email(form, submission_id, rep_info)
+
     if PDF_ENABLED:
         try:
             rep_name = rep_info["name"] if rep_info else None
@@ -1884,6 +2020,9 @@ def submit():
     if not ins.data:
         abort(500, description="Insert failed")
     submission_id = ins.data[0]["id"]
+
+    # Lead summary to rep/support/processing — independent of the PDF pipeline.
+    _queue_lead_summary_email(form, submission_id, rep_info)
 
     # Process inline file uploads (bank statements / voided check / ID).
     # All optional per the new flow; failures are logged but don't block.
