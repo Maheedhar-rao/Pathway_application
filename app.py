@@ -419,6 +419,26 @@ def verify_rep_code(rep_code: str, signature: str) -> bool:
     expected = sign_rep_code(rep_code)
     return hmac.compare_digest(expected, signature)
 
+def resolve_submitted_rep(form: dict) -> tuple[str, Optional[dict]]:
+    """Rep code and info off a submitted form, HMAC verified.
+
+    Both submit paths resolve the rep the same way and both can silently drop
+    it: a bad signature or a code that no longer resolves records the lead as
+    Direct, and nothing in the response says so. Logged here rather than at
+    each call site so the two paths cannot drift apart.
+    """
+    rep_code = (form.get("rep_code") or "").strip()
+    rep_sig = (form.get("rep_sig") or "").strip()
+    if rep_code and not verify_rep_code(rep_code, rep_sig):
+        log.warning("Rejected rep_code %r: signature did not verify — "
+                    "recording submission as Direct", rep_code)
+        rep_code = ""
+    rep_info = get_rep_info(rep_code)
+    if rep_code and not rep_info:
+        log.warning("Rep code %r did not resolve (unknown or deactivated rep) — "
+                    "recording submission as Direct", rep_code)
+    return rep_code, rep_info
+
 sb: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
 # ---- Supabase Storage helpers ------------------------------------------------
@@ -1684,6 +1704,12 @@ def _process_uploads(sid: int, request_files) -> tuple[List[str], List[str], Lis
 def _render_form(client_name=None):
     rep_code = read_rep_param()
     rep_info = get_rep_info(rep_code)
+    if rep_code and not rep_info:
+        # Deliberately still renders: a merchant holding a stale link should be
+        # able to finish, and the lead lands as Direct rather than not at all.
+        # Logged because the page looks identical whether or not the code took.
+        log.warning("Rep code %r on entry link did not resolve (unknown or "
+                    "deactivated rep) — form will submit as Direct", rep_code)
     rep_sig = sign_rep_code(rep_code) if rep_code else ""
     return render_template(
         "form.html",
@@ -1741,11 +1767,7 @@ def submit_application():
     Supabase, fires PDF/email in background, returns JSON {success, submission_id}."""
     form = {k: (v.strip() if isinstance(v, str) else v) for k, v in request.form.items()}
 
-    rep_code = form.get("rep_code", "").strip()
-    rep_sig = form.get("rep_sig", "").strip()
-    if rep_code and not verify_rep_code(rep_code, rep_sig):
-        rep_code = ""
-    rep_info = get_rep_info(rep_code)
+    rep_code, rep_info = resolve_submitted_rep(form)
 
     if "has_owner_1" not in form or not form.get("has_owner_1"):
         form["has_owner_1"] = "No"
@@ -1941,12 +1963,8 @@ def submit():
     # Normalize request.form into a clean dict
     form = {k: (v.strip() if isinstance(v, str) else v) for k, v in request.form.items()}
 
-    # Get rep info from hidden field — verify HMAC to prevent tampering
-    rep_code = form.get("rep_code", "").strip()
-    rep_sig = form.get("rep_sig", "").strip()
-    if rep_code and not verify_rep_code(rep_code, rep_sig):
-        rep_code = ""  # reject tampered rep code
-    rep_info = get_rep_info(rep_code)
+    # Rep comes from the hidden field, HMAC verified (see resolve_submitted_rep)
+    rep_code, rep_info = resolve_submitted_rep(form)
 
     # Enforce default for has_owner_1 if not present
     if "has_owner_1" not in form or not form.get("has_owner_1"):
