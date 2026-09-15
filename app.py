@@ -207,15 +207,15 @@ def verify_resume_token(token: str) -> tuple[Optional[int], str]:
 # ---- Client Branding --------------------------------------------------------
 # Brands are the entry points reps hand to merchants. Each one renders a link
 # two ways, and both keep resolving forever:
-#   * custom domain -> https://application.croccrm.com/?rep=tom
-#   * path slug     -> https://<this app>/pathway-catalyst?rep=tom
+#   * custom domain -> https://application.croccrm.com/?app=tom
+#   * path slug     -> https://<this app>/pathway-catalyst?app=tom
 # A client can go live on a slug today and move to a vanity domain later
 # without reissuing a single rep link.
 #
 # Brands live in the Supabase `client_brands` table (migration
 # 20260818_add_client_brands.sql) so admins add a client from /admin/reps
 # without a deploy — same reasoning as sales_reps. Display-only: branding does
-# not change what is submitted or where it lands, and bare /?rep=tom links
+# not change what is submitted or where it lands, and bare /?app=tom links
 # keep working unchanged.
 _BRAND_CACHE_TTL = 60  # seconds; bumped by writes via _invalidate_brand_cache()
 _brand_cache: dict = {"brands": None, "expires_at": 0.0, "table_ok": True}
@@ -310,8 +310,18 @@ def get_default_brand() -> Optional[dict]:
             return b
     return None
 
+# Query-string key that carries the rep code on an application link.
+#
+# The first entry is what new links are generated with; every entry is still
+# accepted on the way in. Rep links live in emails, text messages, QR codes and
+# link-in-bio pages we do not control, so a key that has ever shipped can never
+# be dropped: retiring one silently turns its links into unattributed "Direct"
+# submissions, and from the merchant's side a stripped rep code looks exactly
+# like a working link. To rename again, prepend the new key and leave the rest.
+LINK_PARAMS = ("app", "rep")
+
 def brand_link_base(brand: Optional[dict]) -> str:
-    """Base URL a rep link is built on: `f"{brand_link_base(b)}?rep={code}"`.
+    """Base URL a rep link is built on: `f"{brand_link_base(b)}?app={code}"`.
 
     A brand with a domain owns its root path; one without borrows this app's
     host and identifies itself with a path segment.
@@ -324,7 +334,19 @@ def brand_link_base(brand: Optional[dict]) -> str:
     return f"{host_base}/"
 
 def brand_rep_link(brand: Optional[dict], rep_code: str) -> str:
-    return f"{brand_link_base(brand)}?rep={rep_code}"
+    return f"{brand_link_base(brand)}?{LINK_PARAMS[0]}={rep_code}"
+
+def read_rep_param() -> str:
+    """Rep code off the inbound URL, accepting every key we have ever issued.
+
+    Lives next to brand_rep_link so the function that writes links and the one
+    that reads them stay driven by the same LINK_PARAMS tuple.
+    """
+    for key in LINK_PARAMS:
+        val = request.args.get(key, "").strip()
+        if val:
+            return val
+    return ""
 
 def current_brand_name() -> Optional[str]:
     """Brand for the host this request came in on, for pages with no slug.
@@ -340,8 +362,9 @@ def current_brand_name() -> Optional[str]:
 # ---- Sales Rep Configuration ------------------------------------------------
 # Reps live in the Supabase `sales_reps` table (see migration
 # 20260512_add_sales_reps.sql). Admins manage them via the /admin/reps page.
-# URL format: /?rep=<code>  e.g., /?rep=tom. Branded variants resolve to the
-# same form — see Client Branding above for the domain/slug entry points.
+# URL format: /?app=<code>  e.g., /?app=tom. Links issued under the older
+# /?rep=tom key keep resolving — see LINK_PARAMS. Branded variants resolve to
+# the same form — see Client Branding above for the domain/slug entry points.
 _REP_CACHE_TTL = 60  # seconds; bumped explicitly by writes via _invalidate_rep_cache()
 _rep_cache: dict = {"reps": None, "expires_at": 0.0}
 _rep_cache_lock = threading.Lock()
@@ -1659,7 +1682,7 @@ def _process_uploads(sid: int, request_files) -> tuple[List[str], List[str], Lis
 
 # -------------------- Public Pages --------------------
 def _render_form(client_name=None):
-    rep_code = request.args.get("rep", "").strip()
+    rep_code = read_rep_param()
     rep_info = get_rep_info(rep_code)
     rep_sig = sign_rep_code(rep_code) if rep_code else ""
     return render_template(
@@ -1679,7 +1702,7 @@ def home():
 
 @app.route("/<client_slug>")
 def home_client(client_slug):
-    # Branded per-client entry point, e.g. /pathway-catalyst?rep=tom. Inactive
+    # Branded per-client entry point, e.g. /pathway-catalyst?app=tom. Inactive
     # brands still render so links already in reps' hands don't break; unknown
     # slugs 404 so this doesn't shadow real assets or typo'd URLs.
     brand = get_brand_by_slug(client_slug, include_inactive=True)
@@ -2826,14 +2849,16 @@ def _brand_conflicting_domain(domain: str, except_slug: str = "") -> Optional[st
 def api_brands():
     """Brands available for rep links, default first.
 
-    `link_base` is what /admin/reps concatenates `?rep=<code>` onto, so the
-    page never has to know how a brand's URL is shaped.
+    `link_base` is what /admin/reps concatenates `?<link_param>=<code>` onto,
+    so the page never has to know how a brand's URL is shaped nor which query
+    key is current — LINK_PARAMS stays the single source of truth.
     """
     include_inactive = request.args.get("include_inactive", "1") != "0"
     brands = [b for b in _get_brands_cached() if include_inactive or b["active"]]
     return jsonify({
         "configured": bool(_brand_cache.get("table_ok", True)),
         "app_host": request.host_url.rstrip("/"),
+        "link_param": LINK_PARAMS[0],
         "brands": [
             {**b, "link_base": brand_link_base(b), "example": brand_rep_link(b, "tom")}
             for b in brands

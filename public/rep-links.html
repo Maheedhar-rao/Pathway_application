@@ -448,6 +448,9 @@
     // works one client's reps all day isn't reselecting on every page load.
     let selectedSlug = localStorage.getItem('repLinkBrand') || '';
     let appHost = '';
+    // Query key for rep links, served by /api/brands so this page never
+    // hardcodes it (LINK_PARAMS in app.py is the source of truth).
+    let linkParam = 'app';
 
     function escapeHtml(s) {
       return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
@@ -497,7 +500,7 @@
     // server-rendered link if the brand list failed to load.
     function repLink(rep) {
       const brand = brands.find(b => b.slug === selectedSlug);
-      return brand ? `${brand.link_base}?rep=${encodeURIComponent(rep.code)}` : rep.link;
+      return brand ? `${brand.link_base}?${linkParam}=${encodeURIComponent(rep.code)}` : rep.link;
     }
 
     function renderReps() {
@@ -654,6 +657,7 @@
         const data = await res.json();
         brands = (data && data.brands) || [];
         appHost = (data && data.app_host) || '';
+        linkParam = (data && data.link_param) || linkParam;
         const bar = document.getElementById('brandBar');
         const warn = document.getElementById('brandWarn');
 
@@ -692,8 +696,8 @@
       const el = document.getElementById('brandPreview');
       if (!brand) { el.textContent = ''; return; }
       el.textContent = brand.domain
-        ? `${brand.link_base}?rep=…`
-        : `${brand.link_base}?rep=…  (no domain set — using this app's address)`;
+        ? `${brand.link_base}?${linkParam}=…`
+        : `${brand.link_base}?${linkParam}=…  (no domain set — using this app's address)`;
     }
 
     function onBrandChange(e) {
