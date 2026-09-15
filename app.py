@@ -2767,18 +2767,37 @@ def api_reps_update(code: str):
 
 @app.route("/api/reps/<code>", methods=["DELETE"])
 @admin_required
-def api_reps_deactivate(code: str):
-    """Soft-delete: set active=false so historical submissions remain attributable."""
+def api_reps_retire(code: str):
+    """Retire a rep. Soft by default; `?permanent=1` drops the row outright.
+
+    Soft (active=false) is the reversible one: the rep stops being offered here
+    and their links stop crediting them, but the row survives so a PATCH of
+    {"active": true} brings them back. Permanent is for codes issued by mistake
+    — a real typo should not sit in the list forever pretending to be someone.
+
+    Historical attribution survives either way: applications copy rep_name and
+    rep_email onto the row at submit time rather than pointing at sales_reps,
+    so there is no foreign key to orphan. A link whose code is gone still
+    renders the form and captures the lead as Direct (see _render_form), so
+    retiring a rep never 404s a merchant who is mid-application.
+    """
     code = code.lower().strip()
     if not _get_reps_cached().get(code):
         return jsonify({"error": "Rep not found."}), 404
+    permanent = request.args.get("permanent") == "1"
+    verb = "delete" if permanent else "deactivate"
     try:
-        sb.table("sales_reps").update({"active": False}).eq("code", code).execute()
+        if permanent:
+            sb.table("sales_reps").delete().eq("code", code).execute()
+        else:
+            sb.table("sales_reps").update({"active": False}).eq("code", code).execute()
     except Exception as e:
-        log.warning("Rep deactivate failed: %s", e)
-        return jsonify({"error": "Failed to deactivate rep."}), 500
+        log.warning("Rep %s failed for %r: %s", verb, code, e)
+        return jsonify({"error": f"Failed to {verb} rep."}), 500
     _invalidate_rep_cache()
-    return jsonify({"ok": True})
+    log.info("Rep %r %s by admin — links carrying that code now submit as Direct",
+             code, "permanently deleted" if permanent else "deactivated")
+    return jsonify({"ok": True, "permanent": permanent})
 
 _BRAND_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
@@ -2944,21 +2963,44 @@ def api_brands_update(slug: str):
 
 @app.route("/api/brands/<slug>", methods=["DELETE"])
 @admin_required
-def api_brands_deactivate(slug: str):
-    """Soft-delete: links already handed out keep resolving (see home_client)."""
+def api_brands_retire(slug: str):
+    """Retire a brand. Soft by default; `?permanent=1` drops the row outright.
+
+    Soft-delete only stops the brand being offered on /admin/reps — links
+    already handed out keep resolving (see home_client), which is why it is
+    the default.
+
+    Permanent deletion is a real revocation and the blast radius is every rep
+    at once: a slug brand's `/<slug>` URL starts 404ing, and a domain brand's
+    links fall back to the default brand's name. So it is refused while the
+    brand is still active — removing one is always deactivate, confirm nothing
+    broke, then delete.
+    """
     slug = slug.lower().strip()
     existing = get_brand_by_slug(slug, include_inactive=True)
     if not existing:
         return jsonify({"error": "Brand not found."}), 404
     if existing["is_default"]:
-        return jsonify({"error": "Make another brand the default before deactivating this one."}), 400
+        return jsonify({"error": "Make another brand the default before removing this one."}), 400
+    permanent = request.args.get("permanent") == "1"
+    if permanent and existing["active"]:
+        return jsonify({"error": "Deactivate this brand first, then delete it."}), 400
+    verb = "delete" if permanent else "deactivate"
     try:
-        sb.table("client_brands").update({"active": False}).eq("slug", slug).execute()
+        if permanent:
+            sb.table("client_brands").delete().eq("slug", slug).execute()
+        else:
+            sb.table("client_brands").update({"active": False}).eq("slug", slug).execute()
     except Exception as e:
-        log.warning("Brand deactivate failed: %s", e)
-        return jsonify({"error": "Failed to deactivate brand."}), 500
+        log.warning("Brand %s failed for %r: %s", verb, slug, e)
+        return jsonify({"error": f"Failed to {verb} brand."}), 500
     _invalidate_brand_cache()
-    return jsonify({"ok": True})
+    if permanent:
+        log.info("Brand %r permanently deleted by admin — /%s now 404s and any "
+                 "custom domain falls back to the default brand", slug, slug)
+    else:
+        log.info("Brand %r deactivated by admin — existing links keep resolving", slug)
+    return jsonify({"ok": True, "permanent": permanent})
 
 # -------------------- Admin Login --------------------
 @app.route("/login", methods=["GET", "POST"])

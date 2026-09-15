@@ -550,9 +550,13 @@
           </div>
         `;
       }
-      const deactivateBtn = rep.active
+      // Deactivate is the reversible retire; Delete drops the row for good.
+      // Both stay available on an inactive rep so a mistaken deactivation can
+      // be undone and a mistaken code can be cleared out.
+      const retireBtn = rep.active
         ? `<button class="icon-btn danger" onclick="deactivateRep('${c}', '${escapeHtml(rep.name)}')">Deactivate</button>`
-        : '';
+        : `<button class="icon-btn" onclick="activateRep('${c}', '${escapeHtml(rep.name)}')">Activate</button>`;
+      const deleteBtn = `<button class="icon-btn danger" onclick="deleteRep('${c}', '${escapeHtml(rep.name)}')">Delete</button>`;
       return `
         <div class="rep-item${rep.active ? '' : ' inactive'}">
           <div class="rep-info">
@@ -563,7 +567,8 @@
           <div class="actions">
             <button class="copy-btn" onclick="copyLink('${c}', this)">Copy Link</button>
             <button class="icon-btn" onclick="startEdit('${c}')">Edit</button>
-            ${deactivateBtn}
+            ${retireBtn}
+            ${deleteBtn}
           </div>
         </div>
       `;
@@ -592,9 +597,50 @@
     }
 
     async function deactivateRep(code, name) {
-      if (!confirm(`Deactivate ${name}? Their link will stop working but historical submissions stay attributed to them.`)) return;
+      // The old wording promised the link would "stop working". It does not —
+      // it still opens the form and still captures the lead, just without the
+      // rep on it. Say that plainly so nobody deactivates expecting a dead URL.
+      if (!confirm(
+        `Deactivate ${name}?\n\n` +
+        `Their links keep opening the application form, but stop crediting ` +
+        `them — those leads arrive as Direct. Past submissions stay attributed ` +
+        `to ${name}. You can Activate them again at any time.`
+      )) return;
       try {
         await apiWrite(`/api/reps/${encodeURIComponent(code)}`, 'DELETE');
+        await loadReps();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function activateRep(code, name) {
+      try {
+        await apiWrite(`/api/reps/${encodeURIComponent(code)}`, 'PATCH', { active: true });
+        await loadReps();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    // Irreversible, so it asks for the code to be typed rather than accepting a
+    // reflexive OK on a confirm() dialog.
+    async function deleteRep(code, name) {
+      const typed = prompt(
+        `Permanently delete ${name}?\n\n` +
+        `Their links stop crediting them and submit as Direct instead. Past ` +
+        `submissions keep showing ${name} — the name is stored on each ` +
+        `application, not looked up. This cannot be undone; use Deactivate if ` +
+        `you might want them back.\n\n` +
+        `Type the rep code "${code}" to confirm:`
+      );
+      if (typed === null) return;
+      if (typed.trim().toLowerCase() !== code) {
+        alert('That did not match the rep code — nothing was deleted.');
+        return;
+      }
+      try {
+        await apiWrite(`/api/reps/${encodeURIComponent(code)}?permanent=1`, 'DELETE');
         await loadReps();
       } catch (err) {
         alert(err.message);
@@ -748,9 +794,14 @@
       const defaultBtn = (b.is_default || !b.active)
         ? ''
         : `<button class="icon-btn" onclick="makeDefaultBrand('${sl}')">Make default</button>`;
-      const deactivateBtn = (b.active && !b.is_default)
-        ? `<button class="icon-btn danger" onclick="deactivateBrand('${sl}', '${escapeHtml(b.name)}')">Deactivate</button>`
-        : '';
+      // Delete is offered only on an inactive brand, mirroring the API rail:
+      // dropping a live brand would 404 every rep link built on it at once.
+      const retireBtn = b.is_default
+        ? ''
+        : (b.active
+            ? `<button class="icon-btn danger" onclick="deactivateBrand('${sl}', '${escapeHtml(b.name)}')">Deactivate</button>`
+            : `<button class="icon-btn" onclick="activateBrand('${sl}')">Activate</button>`
+              + `<button class="icon-btn danger" onclick="deleteBrand('${sl}', '${escapeHtml(b.name)}')">Delete</button>`);
       const domainCell = b.domain
         ? `<div class="brand-domain set">${escapeHtml(b.domain)}</div>`
         : `<div class="brand-domain">no domain — /${sl} on ${escapeHtml(appHost)}</div>`;
@@ -764,7 +815,7 @@
           <div class="actions">
             <button class="icon-btn" onclick="startBrandEdit('${sl}')">Edit</button>
             ${defaultBtn}
-            ${deactivateBtn}
+            ${retireBtn}
           </div>
         </div>
       `;
@@ -798,6 +849,38 @@
       if (!confirm(`Deactivate ${name}? Links already handed out keep working, but it stops being offered here.`)) return;
       try {
         await apiWrite(`/api/brands/${encodeURIComponent(slug)}`, 'DELETE');
+        await refreshBrands();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function activateBrand(slug) {
+      try {
+        await apiWrite(`/api/brands/${encodeURIComponent(slug)}`, 'PATCH', { active: true });
+        await refreshBrands();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    // Unlike deleting a rep, this does break URLs — spell out which ones.
+    async function deleteBrand(slug, name) {
+      const typed = prompt(
+        `Permanently delete ${name}?\n\n` +
+        `Every rep link built on this brand breaks at once: /${slug} starts ` +
+        `returning 404, and if the brand had a custom domain those links fall ` +
+        `back to the default brand's name. Submissions already received are ` +
+        `unaffected. This cannot be undone.\n\n` +
+        `Type the slug "${slug}" to confirm:`
+      );
+      if (typed === null) return;
+      if (typed.trim().toLowerCase() !== slug) {
+        alert('That did not match the slug — nothing was deleted.');
+        return;
+      }
+      try {
+        await apiWrite(`/api/brands/${encodeURIComponent(slug)}?permanent=1`, 'DELETE');
         await refreshBrands();
       } catch (err) {
         alert(err.message);
