@@ -62,3 +62,13 @@ create index if not exists application_events_type_time_idx
 --      and e.created_at > now() - interval '7 days'
 --    group by e.visit_id
 --    order by started_at desc;
+
+
+-- No browser ever talks to this table: app.py holds the only Supabase
+-- credential in the system (the service role key, which bypasses RLS) and
+-- every read and write goes through it. RLS on with no policies therefore
+-- changes nothing for the app, and closes the table to the `anon` and
+-- `authenticated` roles that PostgREST would otherwise answer for it. Worth
+-- doing here specifically because these rows carry IP addresses and user
+-- agents, which the rest of the schema does not.
+alter table application_events enable row level security;
