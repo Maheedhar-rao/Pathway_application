@@ -66,7 +66,7 @@ try:
     from reportlab.lib.units import inch
     from reportlab.platypus import (
         SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-        Image, HRFlowable, BaseDocTemplate, Frame, PageTemplate
+        Image, HRFlowable, BaseDocTemplate, Frame, PageTemplate, PageBreak
     )
     from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_JUSTIFY
     PDF_ENABLED = True
@@ -735,6 +735,100 @@ def _mask_mobile(mobile: str) -> str:
     return "7654562345"
 
 
+
+# ---- Submission record (the PDF's audit page) --------------------------------
+# A signed document that cannot say when it was opened, from which link, or
+# when it was signed is weak evidence. CrocSign appends an audit page to every
+# stamped document for exactly this reason; this is the same page for the
+# application PDF, built from the same trail the dashboard reads.
+#
+# Two rules, and both matter because this copy reaches the applicant:
+#   * Applicant events only. Who on the team opened the file afterwards is
+#     internal and belongs on the dashboard timeline, not on the customer's
+#     document.
+#   * No internal attribution notes. A rep code that failed to resolve is an
+#     operations problem; on the applicant's copy the rep line is simply
+#     omitted rather than annotated.
+#
+# The page is a snapshot: the emailed copy is generated seconds after submit,
+# so it cannot know about documents uploaded later. It stamps the time it was
+# built and says so, and an admin re-download shows everything since.
+_PDF_RECORD_EVENTS = {
+    "form_viewed":            "Application opened",
+    "form_step_viewed":       "Progressed through the form",
+    "application_submitted":  "Application signed and submitted",
+    "documents_uploaded":     "Documents uploaded",
+    "resume_link_opened":     "Credit-setup link opened",
+    "credit_setup_viewed":    "Credit setup opened",
+    "idiq_credentials_saved": "Credit credentials provided",
+}
+
+_UA_BROWSERS = (("Edg/", "Edge"), ("OPR/", "Opera"), ("Chrome/", "Chrome"),
+                ("Firefox/", "Firefox"), ("Safari/", "Safari"))
+_UA_SYSTEMS = (("Windows NT 10", "Windows"), ("Windows", "Windows"),
+               ("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"),
+               ("Mac OS X", "macOS"), ("Linux", "Linux"))
+
+
+def _describe_user_agent(ua: str) -> str:
+    """'Chrome on Windows' rather than 90 characters of version string."""
+    if not ua:
+        return ""
+    browser = next((name for token, name in _UA_BROWSERS if token in ua), "")
+    system = next((name for token, name in _UA_SYSTEMS if token in ua), "")
+    if browser and system:
+        return f"{browser} on {system}"
+    return browser or system or ""
+
+
+def _fmt_record_time(iso_str: str) -> str:
+    try:
+        dt = datetime.fromisoformat((iso_str or "").replace("Z", "+00:00"))
+        return dt.astimezone(EASTERN).strftime("%b %d, %Y at %I:%M:%S %p ET")
+    except Exception:
+        return iso_str or ""
+
+
+def _submission_record_rows(sid: int) -> tuple[list, dict]:
+    """(timeline rows, context) for the record page. Empty list disables it."""
+    events = [e for e in fetch_application_events(sid)
+              if e.get("actor") == "applicant"
+              and e.get("event_type") in _PDF_RECORD_EVENTS]
+    if not events:
+        return [], {}
+
+    ctx, rows, steps = {}, [], set()
+    for e in events:
+        etype = e["event_type"]
+        payload = e.get("payload") or {}
+        if etype == "form_viewed":
+            ctx.setdefault("opened_at", e.get("created_at"))
+            ctx.setdefault("ip", e.get("ip"))
+            ctx.setdefault("user_agent", e.get("user_agent"))
+            ctx.setdefault("brand", payload.get("client_name"))
+            # Named only when the code resolved to a real rep -- printing a
+            # code that no longer exists would assert something untrue.
+            if e.get("rep_code") and payload.get("rep_resolved"):
+                ctx.setdefault("rep_code", e["rep_code"])
+        if etype == "form_step_viewed":
+            step = payload.get("step")
+            if isinstance(step, int):
+                steps.add(step)
+            continue          # folded into one line below, not one row per step
+        detail = ""
+        if etype == "documents_uploaded":
+            n = payload.get("files") or 0
+            detail = f"{n} file{'' if n == 1 else 's'}"
+        rows.append((_fmt_record_time(e.get("created_at")),
+                     _PDF_RECORD_EVENTS[etype], detail))
+        if etype == "application_submitted":
+            ctx["submitted_at"] = e.get("created_at")
+
+    if steps:
+        ctx["furthest_step"] = max(steps)
+    return rows, ctx
+
+
 def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str = None) -> BytesIO:
     """Generate a professionally styled PDF summary of the application."""
     if not PDF_ENABLED:
@@ -949,6 +1043,59 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
             elements.append(Paragraph("Second Owner Signature", ParagraphStyle(
                 'SigLabel2', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY
             )))
+
+    # ── Submission record ──
+    # Never allowed to cost the document: any failure here drops the page and
+    # the application PDF is emailed exactly as before.
+    try:
+        record_rows, ctx = _submission_record_rows(submission_id)
+    except Exception as exc:
+        log.warning("Submission record omitted from PDF %s: %s", submission_id, exc)
+        record_rows, ctx = [], {}
+
+    if record_rows:
+        elements.append(PageBreak())
+        elements.append(Paragraph("Submission Record", section_style))
+        elements.append(Paragraph(
+            "A record of this application's own session, taken from the "
+            "server's activity log.", meta_style))
+        elements.append(Spacer(1, 10))
+
+        summary = []
+        if ctx.get("opened_at"):
+            summary.append(["Opened", _fmt_record_time(ctx["opened_at"])])
+        entry = " · ".join(x for x in (
+            ctx.get("brand"),
+            f"rep link: {ctx['rep_code']}" if ctx.get("rep_code") else "",
+        ) if x)
+        if entry:
+            summary.append(["Entry point", entry])
+        if ctx.get("furthest_step"):
+            summary.append(["Progress", f"reached step {ctx['furthest_step']} of 5"])
+        if ctx.get("submitted_at"):
+            summary.append(["Signed and submitted", _fmt_record_time(ctx["submitted_at"])])
+        device = " · ".join(x for x in (ctx.get("ip"),
+                                        _describe_user_agent(ctx.get("user_agent") or "")) if x)
+        if device:
+            summary.append(["Device", device])
+        if summary:
+            elements.append(_styled_section_table(summary))
+            elements.append(Spacer(1, 14))
+
+        elements.append(Paragraph("Timeline", ParagraphStyle(
+            'RecordSub', parent=styles['Normal'], fontSize=10,
+            textColor=BRAND_DARK, spaceAfter=6,
+        )))
+        elements.append(_styled_section_table(
+            [[when, f"{what}{(' — ' + detail) if detail else ''}"]
+             for when, what, detail in record_rows],
+            col_widths=[2.3*inch, 4.0*inch],
+        ))
+        elements.append(Paragraph(
+            "This record reflects activity known at "
+            f"{datetime.now(EASTERN).strftime('%B %d, %Y at %I:%M %p ET')}. "
+            "Steps taken after this document was generated are not shown.",
+            consent_style))
 
     doc.build(elements)
     buffer.seek(0)
