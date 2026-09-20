@@ -48,7 +48,7 @@ from functools import wraps
 
 from flask import (
     Flask, request, redirect, url_for, render_template, jsonify,
-    send_from_directory, send_file, abort, session
+    send_from_directory, send_file, abort, session, has_request_context
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash
@@ -326,7 +326,7 @@ def brand_link_base(brand: Optional[dict]) -> str:
 def brand_rep_link(brand: Optional[dict], rep_code: str) -> str:
     return f"{brand_link_base(brand)}?rep={rep_code}"
 
-def current_brand_name() -> Optional[str]:
+def current_brand() -> Optional[dict]:
     """Brand for the host this request came in on, for pages with no slug.
 
     A merchant who started on application.croccrm.com stays on that host
@@ -334,7 +334,10 @@ def current_brand_name() -> Optional[str]:
     recovered here (the slug is only on the entry URL) and fall back to the
     default, which is what those links rendered before brands existed.
     """
-    brand = get_brand_by_host(request.host) or get_default_brand()
+    return get_brand_by_host(request.host) or get_default_brand()
+
+def current_brand_name() -> Optional[str]:
+    brand = current_brand()
     return brand["name"] if brand else None
 
 # ---- Sales Rep Configuration ------------------------------------------------
@@ -429,6 +432,156 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 csrf = CSRFProtect(app)
+
+# -------------------- Activity Trace --------------------
+# Append-only record of what happened to an application -- the same idea as
+# CrocSign's crocsign_audit_events, replayed as a timeline on the admin detail
+# view. Schema and the drop-off query live in the migration,
+# supabase/migrations/20260920_add_application_events.sql.
+#
+# What differs from CrocSign is where the trail starts. There, every event
+# belongs to a document that already exists. Here the most useful half of the
+# journey happens before any `applications` row does: which rep link was
+# clicked, how far up the wizard the merchant got, whether they closed the tab
+# on page 3. So events are keyed by a visit id minted when the form renders and
+# carried in the signed session cookie, and attach_visit_to_application() points
+# that visit's rows at the application once it lands. Rows left holding a visit
+# and no application are the drop-offs.
+#
+# Two rules hold everywhere below:
+#   * Tracing never breaks a request. Every write swallows its own exceptions --
+#     a failed audit insert must not cost a lead.
+#   * Payloads carry metadata, never form content: "reached step 3", "saved
+#     credentials", "three bank statements", never what was typed. The one
+#     exception is an email address we just sent something to, which the
+#     dashboard already displays anyway and which is the whole point of a
+#     "link sent" line.
+SESSION_VISIT_KEY = "visit_id"
+# The application this visit produced, kept server-side so events fired after
+# the submit can be filed against it without trusting the browser to name an id.
+SESSION_VISIT_APP_KEY = "visit_app_id"
+
+# Event types the unauthenticated beacon (/api/activity) is allowed to write.
+# Anything else is dropped: the browser may only add to the trail in ways we
+# already expect, never forge an "application_submitted" that makes it lie.
+PUBLIC_EVENT_TYPES = {"form_step_viewed", "form_abandoned"}
+
+# Beacon writes allowed per visit. A real wizard run produces a handful; past
+# this it is a redirect loop or someone poking the endpoint by hand.
+_VISIT_EVENT_CAP = 60
+_visit_event_counts: dict = {}
+_visit_event_lock = threading.Lock()
+
+# Flipped off if the table turns out to be missing, so a deploy that lands ahead
+# of the migration degrades to "no tracing" instead of throwing on every page
+# view. Same defensive shape as the brand cache's table_ok.
+_events_table_ok = True
+
+
+def _is_missing_table(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return ("pgrst205" in msg or "does not exist" in msg
+            or "could not find the table" in msg)
+
+
+def _client_ip() -> Optional[str]:
+    """Caller IP. ProxyFix has already unwrapped one hop of X-Forwarded-For."""
+    return request.remote_addr if has_request_context() else None
+
+
+def _user_agent() -> Optional[str]:
+    if not has_request_context():
+        return None
+    return (request.headers.get("User-Agent") or "")[:500] or None
+
+
+def current_visit_id() -> Optional[str]:
+    return session.get(SESSION_VISIT_KEY) if has_request_context() else None
+
+
+def start_visit() -> str:
+    """Mint a fresh visit id for this browser session.
+
+    A new id per form render rather than one reused forever: a reload restarts
+    the client-side wizard anyway, so this keeps one run of steps per real
+    attempt instead of interleaving two into the same trail.
+    """
+    visit_id = uuid.uuid4().hex
+    session[SESSION_VISIT_KEY] = visit_id
+    session.pop(SESSION_VISIT_APP_KEY, None)
+    return visit_id
+
+
+def log_event(event_type: str, *, application_id: Optional[int] = None,
+              visit_id: Optional[str] = None, actor: str = "applicant",
+              payload: Optional[dict] = None, rep_code: str = "",
+              brand_slug: str = "") -> None:
+    """Append one row to the trace. Best-effort: this never raises."""
+    global _events_table_ok
+    if not _events_table_ok:
+        return
+    try:
+        row = {"event_type": event_type, "actor": actor, "payload": payload or {}}
+        if application_id is not None:
+            row["application_id"] = int(application_id)
+        vid = visit_id if visit_id is not None else current_visit_id()
+        if vid:
+            row["visit_id"] = vid
+        if rep_code:
+            row["rep_code"] = rep_code.lower().strip()[:64]
+        if brand_slug:
+            row["brand_slug"] = brand_slug[:64]
+        ip = _client_ip()
+        if ip:
+            row["ip"] = ip
+        ua = _user_agent()
+        if ua:
+            row["user_agent"] = ua
+        sb.table("application_events").insert(row).execute()
+    except Exception as exc:
+        if _is_missing_table(exc):
+            _events_table_ok = False
+            log.error("application_events table is missing -- activity tracing "
+                      "is off until 20260920_add_application_events.sql is "
+                      "applied and the app restarts")
+        else:
+            log.exception("log_event(%s) failed", event_type)
+
+
+def attach_visit_to_application(visit_id: Optional[str], sid: int) -> None:
+    """Point everything this visit already did at the application it produced.
+
+    Until the insert lands there is no application_id to file the entry link and
+    the wizard steps under, so they sit with a visit id alone. This is the join:
+    after it, one query replays the whole journey on the detail view. Only rows
+    still missing an application are touched, so a second call cannot re-file
+    events that already belong somewhere.
+    """
+    if not visit_id or not _events_table_ok:
+        return
+    try:
+        sb.table("application_events").update(
+            {"application_id": sid}
+        ).eq("visit_id", visit_id).is_("application_id", "null").execute()
+    except Exception:
+        log.exception("Failed to attach visit %s to application %s", visit_id, sid)
+
+
+def fetch_application_events(sid: int, limit: int = 500) -> list:
+    """Timeline for one application, oldest first. Empty on any failure --
+    a dashboard that can't read the trail should still render the lead."""
+    if not _events_table_ok:
+        return []
+    try:
+        res = sb.table("application_events").select(
+            "id, created_at, event_type, actor, rep_code, brand_slug, ip, "
+            "user_agent, payload"
+        ).eq("application_id", sid).order("id", desc=False).limit(limit).execute()
+        return res.data or []
+    except Exception as exc:
+        log.warning("Could not load activity trace for %s: %s", sid, exc)
+        return []
+
 
 # -------------------- Admin Auth --------------------
 ADMIN_EMAIL = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
@@ -1658,10 +1811,26 @@ def _process_uploads(sid: int, request_files) -> tuple[List[str], List[str], Lis
 
 
 # -------------------- Public Pages --------------------
-def _render_form(client_name=None):
+def _render_form(client_name=None, brand_slug=None):
     rep_code = request.args.get("rep", "").strip()
     rep_info = get_rep_info(rep_code)
     rep_sig = sign_rep_code(rep_code) if rep_code else ""
+
+    # Start of a visit: everything the applicant does from here until they
+    # submit (or give up) files under this id. rep_resolved is recorded because
+    # the page looks identical either way -- a dropped rep code is invisible to
+    # the merchant and, without this, invisible to us until the lead lands as
+    # Direct with no explanation.
+    visit_id = start_visit()
+    log_event("form_viewed", visit_id=visit_id, rep_code=rep_code,
+              brand_slug=brand_slug or "",
+              payload={
+                  "rep_resolved": bool(rep_info),
+                  "client_name": client_name,
+                  "entry_path": request.path,
+                  "referrer": (request.referrer or "")[:300] or None,
+              })
+
     return render_template(
         "form.html",
         rep_code=rep_code,
@@ -1675,7 +1844,9 @@ def _render_form(client_name=None):
 def home():
     # On a brand's own domain (application.croccrm.com) the root path is that
     # brand's entry point; on this app's own host it falls back to the default.
-    return _render_form(client_name=current_brand_name())
+    brand = current_brand()
+    return _render_form(client_name=(brand["name"] if brand else None),
+                        brand_slug=(brand["slug"] if brand else None))
 
 @app.route("/<client_slug>")
 def home_client(client_slug):
@@ -1685,7 +1856,7 @@ def home_client(client_slug):
     brand = get_brand_by_slug(client_slug, include_inactive=True)
     if not brand:
         abort(404)
-    return _render_form(client_name=brand["name"])
+    return _render_form(client_name=brand["name"], brand_slug=brand["slug"])
 
 @app.route("/thank-you")
 def thank_you():
@@ -1700,6 +1871,9 @@ def thank_you():
         if rows:
             business = rows[0].get("business_legal_name")
             idiq_already_saved = bool(rows[0].get("idiq_username"))
+        log_event("thank_you_viewed", application_id=sid,
+                  payload={"idiq_saved": idiq_already_saved,
+                           "done": request.args.get("done") == "1"})
     return render_template(
         "thank_you.html",
         client_name=current_brand_name(),
@@ -1739,6 +1913,10 @@ def submit_application():
 
     errors = validate_fields(form)
     if errors:
+        # Field names only -- which questions people fail on is the useful
+        # signal, and the answers themselves have no business in an audit row.
+        log_event("submission_rejected", rep_code=rep_code,
+                  payload={"fields": sorted(errors.keys())})
         return jsonify(success=False, error="Please fix validation errors and try again.", errors=errors), 400
 
     business_legal_name = form.get("business_legal_name") or ""
@@ -1803,6 +1981,17 @@ def submit_application():
     if not ins.data:
         return jsonify(success=False, error="Database insert failed"), 500
     submission_id = ins.data[0]["id"]
+
+    # The visit now has an application to hang off: back-stamp the landing and
+    # the wizard steps, then remember the id so the upload step and the
+    # thank-you page can file against it without the browser supplying one.
+    visit_id = current_visit_id()
+    attach_visit_to_application(visit_id, submission_id)
+    session[SESSION_VISIT_APP_KEY] = submission_id
+    log_event("application_submitted", application_id=submission_id,
+              visit_id=visit_id, rep_code=rep_code,
+              payload={"loan_amount": loan_amount, "owners": len(owners),
+                       "rep_resolved": bool(rep_info), "path": "wizard"})
 
     # Lead summary to rep/support/processing — independent of the PDF pipeline.
     _queue_lead_summary_email(form, submission_id, rep_info)
@@ -1874,6 +2063,11 @@ def upload_documents(sid):
     if _failed:
         log.warning("Submission %s had upload failures: %s", sid, _failed)
 
+    if _saved_types or _failed:
+        log_event("documents_uploaded", application_id=sid,
+                  payload={"types": _saved_types, "files": len(saved_paths),
+                           "failed": len(_failed)})
+
     if saved_paths:
         try:
             app_res = sb.table("applications").select(
@@ -1913,6 +2107,49 @@ def upload_documents(sid):
     return jsonify(success=True, saved=_saved_types, failed=_failed)
 
 
+@app.route("/api/activity", methods=["POST"])
+def api_activity():
+    """Beacon from the wizard: which page the applicant reached, and whether
+    they left without submitting.
+
+    Necessarily unauthenticated -- it fires before an application exists -- so
+    it is narrow on purpose. The visit is read off the signed session cookie
+    and never off the request body, only allowlisted event types are accepted,
+    and a visit gets a fixed budget of writes. It always answers 204: the
+    browser has nothing to do with the result, and tracing must never surface
+    as an error on a page someone is in the middle of filling in.
+    """
+    visit_id = current_visit_id()
+    if not visit_id:
+        return "", 204
+
+    event_type = (request.form.get("event_type") or "").strip()
+    if event_type not in PUBLIC_EVENT_TYPES:
+        return "", 204
+
+    with _visit_event_lock:
+        # Bounded rather than expiring: visits are short, and the worst case of
+        # the reset is that one long-lived visit gets a second budget.
+        if len(_visit_event_counts) > 10_000:
+            _visit_event_counts.clear()
+        count = _visit_event_counts.get(visit_id, 0) + 1
+        _visit_event_counts[visit_id] = count
+    if count > _VISIT_EVENT_CAP:
+        return "", 204
+
+    payload = {}
+    try:
+        step = int(request.form.get("step") or 0)
+    except ValueError:
+        step = 0
+    if 1 <= step <= 20:
+        payload["step"] = step
+
+    log_event(event_type, visit_id=visit_id, payload=payload,
+              application_id=session.get(SESSION_VISIT_APP_KEY))
+    return "", 204
+
+
 @app.route("/submit", methods=["POST"])
 def submit():
     # Normalize request.form into a clean dict
@@ -1943,6 +2180,8 @@ def submit():
     errors = validate_fields(form)
 
     if errors:
+        log_event("submission_rejected", rep_code=rep_code,
+                  payload={"fields": sorted(errors.keys()), "path": "legacy"})
         rep_sig = sign_rep_code(rep_code) if rep_code else ""
         return render_template(
             "form.html",
@@ -2021,6 +2260,14 @@ def submit():
         abort(500, description="Insert failed")
     submission_id = ins.data[0]["id"]
 
+    visit_id = current_visit_id()
+    attach_visit_to_application(visit_id, submission_id)
+    session[SESSION_VISIT_APP_KEY] = submission_id
+    log_event("application_submitted", application_id=submission_id,
+              visit_id=visit_id, rep_code=rep_code,
+              payload={"loan_amount": loan_amount, "owners": len(owners),
+                       "rep_resolved": bool(rep_info), "path": "legacy"})
+
     # Lead summary to rep/support/processing — independent of the PDF pipeline.
     _queue_lead_summary_email(form, submission_id, rep_info)
 
@@ -2029,6 +2276,10 @@ def submit():
     _saved_types, saved_paths, _failed = _process_uploads(submission_id, request.files)
     if _failed:
         log.warning("Submission %s had upload failures: %s", submission_id, _failed)
+    if _saved_types or _failed:
+        log_event("documents_uploaded", application_id=submission_id,
+                  payload={"types": _saved_types, "files": len(saved_paths),
+                           "failed": len(_failed)})
 
     # Generate PDF and email to team + rep + applicant (background so user doesn't wait)
     if PDF_ENABLED:
@@ -2118,8 +2369,14 @@ def submit():
 SESSION_RESUME_KEY = "resume_sid"
 
 
-def _email_resume_link(sid: int, to_email: str, business_name: str = "") -> bool:
-    """Send the merchant a fresh 30-day resume link. Returns True on success."""
+def _email_resume_link(sid: int, to_email: str, business_name: str = "",
+                       actor: str = "system") -> bool:
+    """Send the merchant a fresh 30-day resume link. Returns True on success.
+
+    `actor` says who caused the send -- "admin" from the dashboard's resend
+    button, "system" when the merchant asked for a replacement themselves --
+    and only shapes the activity row, never the email.
+    """
     if not to_email or "@" not in to_email:
         return False
     token = sign_resume_token(sid)
@@ -2170,22 +2427,30 @@ def _email_resume_link(sid: int, to_email: str, business_name: str = "") -> bool
         f"setup. The link is valid for 30 days.\n\n{link}\n\nPowered by CROC"
     )
 
-    try:
-        if RESEND_API_KEY:
-            return _send_via_resend([to_email], subject, html_body, plain_text,
-                                    None, sid, None,
-                                    message_id=None, in_reply_to=_application_message_id(sid))
-        return _send_via_supabase_fn([to_email], subject, html_body, plain_text,
-                                     None, sid, None,
-                                     message_id=None, in_reply_to=_application_message_id(sid))
-    except Exception:
+    def _deliver() -> bool:
         try:
-            return _send_via_smtp([to_email], subject, html_body, plain_text,
-                                  None, sid, None,
-                                  message_id=None, in_reply_to=_application_message_id(sid))
-        except Exception as e:
-            log.error("Resume-link email failed for sid=%s to=%s: %s", sid, to_email, e)
-            return False
+            if RESEND_API_KEY:
+                return _send_via_resend([to_email], subject, html_body, plain_text,
+                                        None, sid, None,
+                                        message_id=None, in_reply_to=_application_message_id(sid))
+            return _send_via_supabase_fn([to_email], subject, html_body, plain_text,
+                                         None, sid, None,
+                                         message_id=None, in_reply_to=_application_message_id(sid))
+        except Exception:
+            try:
+                return _send_via_smtp([to_email], subject, html_body, plain_text,
+                                      None, sid, None,
+                                      message_id=None, in_reply_to=_application_message_id(sid))
+            except Exception as e:
+                log.error("Resume-link email failed for sid=%s to=%s: %s", sid, to_email, e)
+                return False
+
+    # Logged either way: a link that was never delivered is exactly what you
+    # want to see on the timeline when the merchant says they never got one.
+    ok = bool(_deliver())
+    log_event("resume_link_sent", application_id=sid, actor=actor,
+              payload={"to": to_email, "delivered": ok})
+    return ok
 
 
 @app.route("/resume")
@@ -2197,7 +2462,10 @@ def resume_application():
     sid, status = verify_resume_token(token)
     if status == "ok" and sid:
         session[SESSION_RESUME_KEY] = sid
+        log_event("resume_link_opened", application_id=sid)
         return redirect(url_for("credit_setup"))
+    # No application id to file this against -- a bad token names nobody.
+    log_event("resume_link_rejected", payload={"reason": status})
     # Expired or invalid — render the recovery page; show "request another"
     # form for expired tokens, generic for invalid.
     return render_template(
@@ -2223,6 +2491,8 @@ def credit_setup():
         return redirect(url_for("credit_setup_link_lost"))
 
     row = rows[0]
+    log_event("credit_setup_viewed", application_id=sid,
+              payload={"idiq_saved": bool(row.get("idiq_username"))})
     return render_template(
         "credit_setup.html",
         sid=sid,
@@ -2242,6 +2512,8 @@ def credit_setup_credentials():
     username = (request.form.get("idiq_username") or "").strip()
     password = request.form.get("idiq_password") or ""
     if not username and not password:
+        log_event("idiq_credentials_skipped", application_id=sid,
+                  payload={"page": "credit_setup"})
         return redirect(url_for("credit_setup", done="1"))
 
     try:
@@ -2253,6 +2525,11 @@ def credit_setup_credentials():
         log.error("Failed to persist IDIQ creds via credit-setup for %s: %s", sid, exc)
         abort(500, description="Failed to save IDIQ credentials")
 
+    # Presence flags only. The username is in the row and the password is
+    # encrypted there; neither belongs in an audit payload.
+    log_event("idiq_credentials_saved", application_id=sid,
+              payload={"has_username": bool(username), "has_password": bool(password),
+                       "page": "credit_setup"})
     return redirect(url_for("credit_setup", done="1"))
 
 
@@ -2277,6 +2554,9 @@ def credit_setup_link_lost():
                     "id", desc=True
                 ).limit(1).execute()
                 rows = res.data or []
+                log_event("resume_link_requested",
+                          application_id=(rows[0]["id"] if rows else None),
+                          payload={"matched": bool(rows)})
                 if rows:
                     _email_resume_link(rows[0]["id"], email,
                                        business_name=rows[0].get("business_legal_name") or "")
@@ -2305,6 +2585,8 @@ def idiq_credentials():
     password = request.form.get("idiq_password") or ""
     if not username and not password:
         # Nothing to do — user skipped. Bounce back to thank-you.
+        log_event("idiq_credentials_skipped", application_id=sid,
+                  payload={"page": "thank_you"})
         return redirect(url_for("thank_you", sid=sid))
 
     try:
@@ -2316,6 +2598,9 @@ def idiq_credentials():
         log.error("Failed to persist IDIQ credentials for %s: %s", sid, exc)
         abort(500, description="Failed to save IDIQ credentials")
 
+    log_event("idiq_credentials_saved", application_id=sid,
+              payload={"has_username": bool(username), "has_password": bool(password),
+                       "page": "thank_you"})
     return redirect(url_for("thank_you", sid=sid, done="1"))
 
 
@@ -2326,6 +2611,10 @@ def upload_docs():
         abort(400)
 
     saved, attached_paths, failed = _process_uploads(sid, request.files)
+    if saved or failed:
+        log_event("documents_uploaded", application_id=sid,
+                  payload={"types": saved, "files": len(attached_paths),
+                           "failed": len(failed)})
 
     # Email uploaded documents to team + rep (in background)
     if attached_paths:
@@ -2431,7 +2720,8 @@ def api_resend_credit_link(sid: int):
     if not to_email or "@" not in to_email:
         return jsonify({"error": "No valid email — provide one in the override field."}), 400
 
-    ok = _email_resume_link(sid, to_email, business_name=row.get("business_legal_name") or "")
+    ok = _email_resume_link(sid, to_email, business_name=row.get("business_legal_name") or "",
+                            actor="admin")
     if not ok:
         return jsonify({"error": "Failed to send email (check provider config)."}), 500
     return jsonify({"ok": True, "sent_to": to_email})
@@ -2566,6 +2856,9 @@ def api_remind_docs(sid: int):
     )
     if not ok:
         return jsonify({"error": "Failed to send email (check provider config)."}), 500
+    log_event("docs_reminder_sent", application_id=sid, actor="admin",
+              payload={"to": to_email, "missing": missing,
+                       "by": session.get("admin_email")})
     return jsonify({"ok": True, "sent_to": to_email, "missing": missing})
 
 
@@ -2594,6 +2887,11 @@ def api_submission_detail(sid: int):
             f["url"] = ""
 
     app_row["files"] = files
+    # Read before the view is recorded, so the modal never opens on its own
+    # footprint -- this visit shows up the next time someone looks.
+    app_row["events"] = fetch_application_events(sid)
+    log_event("admin_viewed_application", application_id=sid, actor="admin",
+              payload={"by": session.get("admin_email")})
     return jsonify(app_row)
 
 
@@ -2617,6 +2915,8 @@ def api_submission_pdf(sid: int):
     biz = payload.get("business_legal_name", "application")
     safe_name = re.sub(r"[^A-Za-z0-9_\- ]", "", biz).strip().replace(" ", "_") or "application"
     filename = f"Pathway_Application_{row['id']}_{safe_name}.pdf"
+    log_event("admin_downloaded_pdf", application_id=sid, actor="admin",
+              payload={"by": session.get("admin_email")})
     return send_file(pdf_buf, mimetype="application/pdf", as_attachment=True, download_name=filename)
 
 
@@ -2936,8 +3236,12 @@ def login():
             session.clear()
             session["admin_authed"] = True
             session["admin_email"] = email
+            log_event("admin_signed_in", actor="admin", payload={"email": email})
             return redirect(request.args.get("next") or url_for("admin_static_dashboard"))
         log.warning("Failed admin login attempt for email=%r from %s", email, request.remote_addr)
+        # Kept alongside the log line: the log rotates, the trail does not, and
+        # a run of these against one IP is the thing worth being able to look up.
+        log_event("admin_sign_in_failed", actor="admin", payload={"email": email})
         error = "Invalid email or password."
 
     return render_template("login.html", error=error), (401 if error else 200)
