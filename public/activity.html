@@ -212,6 +212,9 @@
     admin_sign_in_failed:'Failed admin sign-in',
   };
 
+  // Sentinel: '' already means "all links", so direct traffic needs its own
+  // value rather than the empty rep_code it actually carries.
+  const DIRECT = '__direct__';
   let state = { days:7, rep:'', data:null };
   let timer = null;
 
@@ -415,9 +418,15 @@
     document.getElementById('tiles').innerHTML = html;
   }
 
-  function renderRepTable(rows, totals) {
+  function renderRepTable(rows, totals, idle) {
+    idle = idle || [];
     const el = document.getElementById('repTable');
-    if (!rows.length) { el.innerHTML = '<p class="empty">No form opens in this window.</p>'; return; }
+    if (!rows.length) {
+      el.innerHTML = '<p class="empty">No form opens in this window.'
+        + (idle.length ? ` None of these links were opened: ${idle.map(esc).join(', ')}.` : '')
+        + '</p>';
+      return;
+    }
     const max = Math.max(...rows.map(r => r.opens));
     el.innerHTML = `
       <table class="table">
@@ -441,7 +450,9 @@
             <td><span class="bar-mini" style="width:${Math.round(60 * r.opens / max)}px"></span></td>
           </tr>`).join('')}
         </tbody>
-      </table>`;
+      </table>
+      ${idle.length ? `<p class="empty" style="padding-top:12px">
+        <strong>No opens this window:</strong> ${idle.map(esc).join(', ')}</p>` : ''}`;
   }
 
   function renderVisits(rows) {
@@ -495,9 +506,10 @@
 
   function applyRepFilter(data) {
     if (!state.rep) return data;
-    const keep = v => (v.rep_code || '') === state.rep;
+    const want = state.rep === DIRECT ? '' : state.rep;
+    const keep = v => (v.rep_code || '') === want;
     const visits = data.visits.filter(keep);
-    const by_rep = data.by_rep.filter(r => (r.rep_code || '') === state.rep);
+    const by_rep = data.by_rep.filter(r => (r.rep_code || '') === want);
     const g = by_rep[0] || { opens:0, submitted:0, dropped:0, unresolved:0,
                              left_after_details:0, bounced:0, step_views:0 };
     const daily = {};
@@ -511,7 +523,7 @@
                 step_views:g.step_views,
                 conversion: g.opens ? Math.round(1000*g.submitted/g.opens)/10 : 0 },
       daily: Object.keys(daily).sort().map(k => daily[k]),
-      feed: data.feed.filter(e => !e.rep_code || e.rep_code === state.rep) };
+      feed: data.feed.filter(e => !e.rep_code || e.rep_code === want) };
   }
 
   function render() {
@@ -526,16 +538,32 @@
       ? `<div class="notice">Showing the most recent ${esc(raw.event_count)} events — the window holds more. Narrow the range for exact totals.</div>`
       : '';
 
+    // Union of the rep roster and anything seen in the data, so a retired or
+    // deleted rep with history stays selectable alongside reps with no traffic.
     const sel = document.getElementById('repFilter');
-    const opts = raw.by_rep.map(r => r.rep_code).filter(Boolean);
+    const known = (raw.known_reps || []).map(r => r.code);
+    const seen = raw.by_rep.map(r => r.rep_code).filter(Boolean);
+    const withData = new Set(seen);
+    const codes = known.concat(seen.filter(c => !known.includes(c)));
+    const inactive = new Set((raw.known_reps || []).filter(r => !r.active).map(r => r.code));
     sel.innerHTML = '<option value="">All rep links</option>'
-      + opts.map(c => `<option value="${esc(c)}"${c===state.rep?' selected':''}>${esc(c)}</option>`).join('');
+      + `<option value="${DIRECT}"${state.rep===DIRECT?' selected':''}>direct (no rep code)</option>`
+      + codes.map(c => {
+          const tags = [];
+          if (inactive.has(c)) tags.push('inactive');
+          if (!withData.has(c)) tags.push('no opens');
+          return `<option value="${esc(c)}"${c===state.rep?' selected':''}>`
+               + `${esc(c)}${tags.length ? ' — ' + tags.join(', ') : ''}</option>`;
+        }).join('');
 
     const d = applyRepFilter(raw);
     renderTiles(d.totals);
     renderChart(d.daily);
     renderFunnel(d.by_rep);
-    renderRepTable(d.by_rep, d.totals);
+    // Active reps whose links saw no traffic at all in this window.
+    const active = (raw.known_reps || []).filter(r => r.active).map(r => r.code);
+    const hadOpens = new Set(d.by_rep.map(r => r.rep_code).filter(Boolean));
+    renderRepTable(d.by_rep, d.totals, active.filter(c => !hadOpens.has(c)));
     renderVisits(d.visits);
     renderFeed(d.feed);
     document.getElementById('stamp').textContent =

@@ -3406,6 +3406,14 @@ def api_activity_summary():
                         "reason": "Could not read the activity trail."}), 200
 
     out = _summarize_visits(rows)
+    # Every rep, not only those with traffic in the window. A link nobody
+    # opened all week is the finding you most want to see, and it can only be
+    # seen if it is selectable -- filtering to it and getting zeros is the
+    # answer, not an empty dropdown.
+    out["known_reps"] = sorted(
+        ({"code": code, "name": r.get("name"), "active": bool(r.get("active", True))}
+         for code, r in _get_reps_cached().items()),
+        key=lambda r: (not r["active"], r["code"]))
     out.update({
         "available": True,
         "window_days": days,
