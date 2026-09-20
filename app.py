@@ -3627,7 +3627,11 @@ def admin_rep_links():
 @app.after_request
 def add_no_store_headers(resp):
     try:
-        if resp.mimetype == "text/html":
+        # JSON as well as HTML: the admin APIs return per-request state, and
+        # the activity page polls one of them every 30 seconds. With no cache
+        # headers at all a browser may serve a heuristically cached response,
+        # which shows up as a dashboard that has quietly stopped moving.
+        if resp.mimetype in ("text/html", "application/json"):
             resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             resp.headers["Pragma"] = "no-cache"
             resp.headers["Expires"] = "0"

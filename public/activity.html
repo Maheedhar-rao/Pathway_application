@@ -572,7 +572,10 @@
 
   async function load() {
     try {
-      const res = await fetch('/api/activity/summary?days=' + state.days);
+      // no-store so a poll never reads its own previous answer out of the
+      // browser cache -- stale numbers here look identical to no traffic.
+      const res = await fetch('/api/activity/summary?days=' + state.days,
+                              { cache: 'no-store' });
       if (res.status === 401) { window.location.href = '/login?next=/admin/activity'; return; }
       state.data = await res.json();
     } catch (e) {
