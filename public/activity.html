@@ -56,6 +56,8 @@
     .chart { width:100%; height:auto; display:block; overflow:visible; }
     .chart .grid { stroke:rgba(148,163,184,.14); stroke-width:1; }
     .chart .axis { fill:#94a3b8; font-size:10px; }
+    .chart .rowlab { fill:#cbd5e1; font-size:11px; }
+    .chart .rowval { fill:#94a3b8; font-size:11px; font-weight:600; }
     .chart .hit { fill:transparent; cursor:default; }
     .chart .hit:hover ~ .barcol rect, .chart g.col:hover rect.seg { filter:brightness(1.18); }
     .tip {
@@ -149,7 +151,10 @@
 
     <div class="card">
       <div class="card-header"><h2>By rep link</h2></div>
-      <div class="card-body"><div class="table-wrap" id="repTable"></div></div>
+      <div class="card-body">
+        <div id="funnelBlock"></div>
+        <div class="table-wrap" id="repTable" style="margin-top:18px"></div>
+      </div>
     </div>
 
     <div class="card">
@@ -271,12 +276,12 @@
       <div class="chart-head">
         <h3>Form opens per day</h3>
         <div class="legend">
-          <span><i style="background:${C_SUBMIT}"></i>Submitted</span>
-          <span><i style="background:${C_OPEN}"></i>No submit</span>
+          <span><i style="background:${C_SUBMIT}"></i>Completed</span>
+          <span><i style="background:${C_OPEN}"></i>Not completed</span>
         </div>
       </div>
       <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"
-           role="img" aria-label="Form opens per day, split by whether the visit submitted">
+           role="img" aria-label="Form opens per day, split by whether the visit completed an application">
         ${grid}${bars}${xlab}
       </svg>`;
 
@@ -286,8 +291,8 @@
       const show = e => {
         tip.innerHTML = `<div class="t">${esc(dayLabel(d.date))}</div>`
           + `<div class="r"><span>Opens</span><b>${d.opens}</b></div>`
-          + `<div class="r"><span>Submitted</span><b>${d.submitted}</b></div>`
-          + `<div class="r"><span>No submit</span><b>${d.opens - d.submitted}</b></div>`;
+          + `<div class="r"><span>Completed</span><b>${d.submitted}</b></div>`
+          + `<div class="r"><span>Not completed</span><b>${d.opens - d.submitted}</b></div>`;
         tip.style.display = 'block';
         const r = el.getBoundingClientRect();
         tip.style.left = Math.min(window.innerWidth - tip.offsetWidth - 12, r.left) + 'px';
@@ -301,13 +306,101 @@
     });
   }
 
+  // ── Per-link funnel ──────────────────────────────────────────────────────
+  // One row per link, bar length = opens, split by how the visit ended. The
+  // three segments sum to the bar, so the composition and the magnitude are
+  // the same mark -- no second chart to cross-reference.
+  //
+  // Horizontal because the categories are names: a vertical version would set
+  // "juliette" on its side. Amber against blue clears CVD separation at ΔE 29.9
+  // (protan); the grey tail is the remainder, so it takes a neutral rather than
+  // competing for identity.
+  const C_DONE = '#60a5fa', C_LEFT = '#fbbf24', C_BOUNCE = '#64748b';
+
+  function renderFunnel(rows) {
+    const block = document.getElementById('funnelBlock');
+    if (!rows || !rows.length) { block.innerHTML = ''; return; }
+
+    const LW = 92, VW = 46, R = 8, rowH = 26, gap = 9, T = 8, B = 24;
+    const W = 760, plotW = W - LW - VW - R;
+    const H = T + rows.length * (rowH + gap) + B;
+    const max = Math.max(1, ...rows.map(r => r.opens));
+    const tick = Math.max(1, Math.ceil(max / 4));
+    const top = tick * 4;
+    const x = v => LW + (v / top) * plotW;
+
+    let grid = '';
+    for (let i = 0; i <= 4; i++) {
+      const v = tick * i;
+      grid += `<line class="grid" x1="${x(v)}" y1="${T}" x2="${x(v)}" y2="${H-B+4}"/>`
+           +  `<text class="axis" x="${x(v)}" y="${H-B+16}" text-anchor="middle">${v}</text>`;
+    }
+
+    let bars = '';
+    rows.forEach((r, i) => {
+      const y = T + i * (rowH + gap);
+      const segs = [
+        ['done',   r.submitted,          C_DONE],
+        ['left',   r.left_after_details, C_LEFT],
+        ['bounce', r.bounced,            C_BOUNCE],
+      ].filter(sg => sg[1] > 0);
+      let cx = LW;
+      segs.forEach((sg, k) => {
+        const w = Math.max(2, (sg[1] / top) * plotW);
+        const last = k === segs.length - 1;
+        bars += `<rect class="seg" x="${cx}" y="${y}" width="${w}" height="${rowH}"`
+             +  ` ${last ? 'rx="4"' : ''} fill="${sg[2]}"/>`;
+        // 2px surface gap so a boundary reads as a break, not a colour change.
+        cx += w + 2;
+      });
+      bars += `<text class="rowlab" x="${LW-8}" y="${y+rowH/2+4}" text-anchor="end">`
+           +  `${esc(r.rep_code || 'direct')}</text>`
+           +  `<text class="rowval" x="${Math.min(W-R, cx+6)}" y="${y+rowH/2+4}">${r.opens}</text>`
+           +  `<rect class="hit" x="${LW}" y="${y-3}" width="${plotW}" height="${rowH+6}" data-i="${i}" tabindex="0"/>`;
+    });
+
+    block.innerHTML = `
+      <div class="chart-head">
+        <h3>How each link's opens ended</h3>
+        <div class="legend">
+          <span><i style="background:${C_DONE}"></i>Completed</span>
+          <span><i style="background:${C_LEFT}"></i>Left after entering details</span>
+          <span><i style="background:${C_BOUNCE}"></i>Left on first page</span>
+        </div>
+      </div>
+      <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"
+           role="img" aria-label="Opens per rep link, split by how each visit ended">
+        ${grid}${bars}
+      </svg>`;
+
+    const tip = document.getElementById('tip');
+    block.querySelectorAll('.hit').forEach(el => {
+      const r = rows[Number(el.dataset.i)];
+      const show = () => {
+        tip.innerHTML = `<div class="t">${esc(r.rep_code || 'direct')} · ${r.opens} opens</div>`
+          + `<div class="r"><span>Completed</span><b>${r.submitted}</b></div>`
+          + `<div class="r"><span>Left after details</span><b>${r.left_after_details}</b></div>`
+          + `<div class="r"><span>Left on first page</span><b>${r.bounced}</b></div>`
+          + `<div class="r"><span>Step views</span><b>${r.step_views}</b></div>`;
+        tip.style.display = 'block';
+        const b = el.getBoundingClientRect();
+        tip.style.left = Math.min(window.innerWidth - tip.offsetWidth - 12, b.left + 40) + 'px';
+        tip.style.top  = Math.max(8, b.top - tip.offsetHeight - 6) + 'px';
+      };
+      const hide = () => { tip.style.display = 'none'; };
+      el.addEventListener('mouseenter', show); el.addEventListener('focus', show);
+      el.addEventListener('mouseleave', hide); el.addEventListener('blur', hide);
+    });
+  }
+
   // ── Tables ───────────────────────────────────────────────────────────────
   function renderTiles(t) {
     const tiles = [
-      ['Form opens', t.opens, 'visits that reached the form'],
-      ['Submitted', t.submitted, 'became an application'],
-      ['Conversion', Number(t.conversion).toFixed(1) + '%', 'of opens that submitted'],
-      ['No submit', t.dropped, 'opened, never submitted'],
+      ['Form opens', t.opens, `${t.step_views || 0} step views inside the form`],
+      ['Completed', t.submitted, 'submitted an application'],
+      ['Left after details', t.left_after_details, 'got past page 1, never finished'],
+      ['Left on first page', t.bounced, 'opened and went no further'],
+      ['Conversion', Number(t.conversion).toFixed(1) + '%', 'of opens that completed'],
     ];
     let html = tiles.map(([k,v,s]) =>
       `<div class="tile"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div><div class="sub">${esc(s)}</div></div>`
@@ -329,9 +422,9 @@
     el.innerHTML = `
       <table class="table">
         <thead><tr>
-          <th>Rep link</th><th class="num">Opens</th><th class="num">Submitted</th>
-          <th class="num">No submit</th><th class="num">Conversion</th>
-          <th class="num">Avg step</th><th>Share</th>
+          <th>Rep link</th><th class="num">Opens</th><th class="num">Completed</th>
+          <th class="num">Left after details</th><th class="num">Left on page 1</th>
+          <th class="num">Conversion</th><th class="num">Avg step</th><th>Share</th>
         </tr></thead>
         <tbody>${rows.map(r => `
           <tr>
@@ -341,7 +434,8 @@
                 ${r.unresolved ? `<span class="pill bad" title="the link carried a code that no longer resolves, so the lead was recorded as Direct"><i></i>${r.unresolved} not credited</span>` : ''}</td>
             <td class="num">${r.opens}</td>
             <td class="num">${r.submitted}</td>
-            <td class="num">${r.dropped}</td>
+            <td class="num">${r.left_after_details}</td>
+            <td class="num">${r.bounced}</td>
             <td class="num">${r.conversion.toFixed(1)}%</td>
             <td class="num">${r.avg_step.toFixed(1)}</td>
             <td><span class="bar-mini" style="width:${Math.round(60 * r.opens / max)}px"></span></td>
@@ -369,8 +463,8 @@
             <td class="mono">${esc(v.brand_slug || '—')}</td>
             <td class="num">${v.furthest_step}</td>
             <td>${v.submitted
-                  ? '<span class="pill ok"><i></i>submitted</span>'
-                  : '<span class="pill no"><i></i>no submit</span>'}</td>
+                  ? '<span class="pill ok"><i></i>completed</span>'
+                  : '<span class="pill no"><i></i>not completed</span>'}</td>
             <td>${v.application_id ? `<a class="nav-link" style="padding:3px 9px" href="/admin#${v.application_id}">#${v.application_id}</a>` : '<span class="mono">—</span>'}</td>
           </tr>`).join('')}
         </tbody>
@@ -404,7 +498,8 @@
     const keep = v => (v.rep_code || '') === state.rep;
     const visits = data.visits.filter(keep);
     const by_rep = data.by_rep.filter(r => (r.rep_code || '') === state.rep);
-    const g = by_rep[0] || { opens:0, submitted:0, dropped:0, unresolved:0 };
+    const g = by_rep[0] || { opens:0, submitted:0, dropped:0, unresolved:0,
+                             left_after_details:0, bounced:0, step_views:0 };
     const daily = {};
     visits.forEach(v => {
       const d = (daily[v.opened_at.slice(0,10)] ||= { date:v.opened_at.slice(0,10), opens:0, submitted:0 });
@@ -412,6 +507,8 @@
     });
     return { ...data, visits, by_rep,
       totals: { opens:g.opens, submitted:g.submitted, dropped:g.dropped, unresolved:g.unresolved,
+                left_after_details:g.left_after_details, bounced:g.bounced,
+                step_views:g.step_views,
                 conversion: g.opens ? Math.round(1000*g.submitted/g.opens)/10 : 0 },
       daily: Object.keys(daily).sort().map(k => daily[k]),
       feed: data.feed.filter(e => !e.rep_code || e.rep_code === state.rep) };
@@ -437,6 +534,7 @@
     const d = applyRepFilter(raw);
     renderTiles(d.totals);
     renderChart(d.daily);
+    renderFunnel(d.by_rep);
     renderRepTable(d.by_rep, d.totals);
     renderVisits(d.visits);
     renderFeed(d.feed);

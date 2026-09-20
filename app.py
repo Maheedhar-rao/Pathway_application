@@ -3294,8 +3294,13 @@ def _summarize_visits(rows: list) -> dict:
             "rep_code": None, "brand_slug": None, "furthest_step": 1,
             "submitted": False, "application_id": None, "abandoned": False,
             "rep_resolved": None, "ip": None, "user_agent": None, "events": 0,
+            "step_views": 0,
         })
         v["events"] += 1
+        if r["event_type"] == "form_step_viewed":
+            # Only form_viewed carries the rep code, so step beacons are
+            # attributed through the visit they belong to.
+            v["step_views"] += 1
         v["last_at"] = r["created_at"]
         payload = r.get("payload") or {}
         if r["event_type"] == "form_viewed":
@@ -3325,13 +3330,22 @@ def _summarize_visits(rows: list) -> dict:
         g = by_rep.setdefault(key, {
             "rep_code": v["rep_code"], "opens": 0, "submitted": 0,
             "dropped": 0, "unresolved": 0, "step_total": 0,
+            "left_after_details": 0, "bounced": 0, "step_views": 0,
         })
         g["opens"] += 1
         g["step_total"] += v["furthest_step"]
+        g["step_views"] += v["step_views"]
         if v["submitted"]:
             g["submitted"] += 1
         else:
             g["dropped"] += 1
+            # Two very different failures, and lumping them together hides
+            # both: someone who typed real details and gave up is a lead worth
+            # chasing, someone who never left page one is a traffic problem.
+            if v["furthest_step"] >= 2:
+                g["left_after_details"] += 1
+            else:
+                g["bounced"] += 1
         if v["rep_resolved"] is False:
             g["unresolved"] += 1              # code was present and did not resolve
 
@@ -3339,6 +3353,8 @@ def _summarize_visits(rows: list) -> dict:
         opens = g["opens"] or 1
         g["conversion"] = round(100.0 * g["submitted"] / opens, 1)
         g["avg_step"] = round(g.pop("step_total") / opens, 1)
+        # Everyone who got past the entry page, whether or not they finished.
+        g["started"] = g["submitted"] + g["left_after_details"]
 
     daily: dict = {}
     for v in seen:
@@ -3349,11 +3365,16 @@ def _summarize_visits(rows: list) -> dict:
             d["submitted"] += 1
 
     submitted = sum(1 for v in seen if v["submitted"])
+    left_after = sum(1 for v in seen if not v["submitted"] and v["furthest_step"] >= 2)
     return {
         "totals": {
             "opens": len(seen),
             "submitted": submitted,
             "dropped": len(seen) - submitted,
+            "left_after_details": left_after,
+            "bounced": len(seen) - submitted - left_after,
+            "started": submitted + left_after,
+            "step_views": sum(v["step_views"] for v in seen),
             "conversion": round(100.0 * submitted / len(seen), 1) if seen else 0.0,
             "unresolved": sum(1 for v in seen if v["rep_resolved"] is False),
         },
