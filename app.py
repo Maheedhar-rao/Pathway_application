@@ -25,7 +25,7 @@ from html import escape
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from io import BytesIO
 from pathlib import Path
@@ -53,6 +53,9 @@ from flask import (
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash
 from supabase import create_client, Client
+# SyncClientOptions, not the ClientOptions base: only the sync subclass carries
+# the storage the sync client expects. This is the alias the library uses itself.
+from supabase.lib.client_options import SyncClientOptions as ClientOptions
 from dotenv import load_dotenv, find_dotenv
 
 # PDF generation
@@ -477,6 +480,21 @@ _visit_event_lock = threading.Lock()
 # view. Same defensive shape as the brand cache's table_ok.
 _events_table_ok = True
 
+# Tracing gets its own Supabase client, with a short timeout.
+#
+# The shared `sb` keeps the library default of 120s, which is right for a
+# submission insert: that request *is* the lead, and waiting two minutes beats
+# losing it. It is wrong for an audit row. log_event sits on the form-render
+# path, and a Supabase that hangs rather than fails would park a gunicorn
+# worker for the full two minutes on every page view -- with four workers, that
+# takes the application form down for everyone to record that someone looked at
+# it. Better to drop the event and serve the form.
+EVENTS_TIMEOUT_SECONDS = float(os.environ.get("EVENTS_TIMEOUT_SECONDS", "2.5"))
+_events_sb: Client = create_client(
+    SUPABASE_URL, SUPABASE_SERVICE_ROLE,
+    options=ClientOptions(postgrest_client_timeout=EVENTS_TIMEOUT_SECONDS),
+)
+
 
 def _is_missing_table(exc: Exception) -> bool:
     msg = str(exc).lower()
@@ -524,7 +542,12 @@ def log_event(event_type: str, *, application_id: Optional[int] = None,
         row = {"event_type": event_type, "actor": actor, "payload": payload or {}}
         if application_id is not None:
             row["application_id"] = int(application_id)
-        vid = visit_id if visit_id is not None else current_visit_id()
+        # Only an applicant's own events inherit the session visit. An admin
+        # whose browser once opened the public form still carries that visit in
+        # their cookie, and without this every dashboard click they made landed
+        # in some merchant's journey.
+        vid = visit_id if visit_id is not None else (
+            current_visit_id() if actor == "applicant" else None)
         if vid:
             row["visit_id"] = vid
         if rep_code:
@@ -537,7 +560,7 @@ def log_event(event_type: str, *, application_id: Optional[int] = None,
         ua = _user_agent()
         if ua:
             row["user_agent"] = ua
-        sb.table("application_events").insert(row).execute()
+        _events_sb.table("application_events").insert(row).execute()
     except Exception as exc:
         if _is_missing_table(exc):
             _events_table_ok = False
@@ -560,7 +583,7 @@ def attach_visit_to_application(visit_id: Optional[str], sid: int) -> None:
     if not visit_id or not _events_table_ok:
         return
     try:
-        sb.table("application_events").update(
+        _events_sb.table("application_events").update(
             {"application_id": sid}
         ).eq("visit_id", visit_id).is_("application_id", "null").execute()
     except Exception:
@@ -573,7 +596,7 @@ def fetch_application_events(sid: int, limit: int = 500) -> list:
     if not _events_table_ok:
         return []
     try:
-        res = sb.table("application_events").select(
+        res = _events_sb.table("application_events").select(
             "id, created_at, event_type, actor, rep_code, brand_slug, ip, "
             "user_agent, payload"
         ).eq("application_id", sid).order("id", desc=False).limit(limit).execute()
@@ -1822,14 +1845,18 @@ def _render_form(client_name=None, brand_slug=None):
     # the merchant and, without this, invisible to us until the lead lands as
     # Direct with no explanation.
     visit_id = start_visit()
+    payload = {
+        "client_name": client_name,
+        "entry_path": request.path,
+        "referrer": (request.referrer or "")[:300] or None,
+    }
+    if rep_code:
+        # Only recorded when a code was actually on the link. Stamping
+        # rep_resolved=false on a plain direct visit made every one of them
+        # read as a dropped rep code on the timeline.
+        payload["rep_resolved"] = bool(rep_info)
     log_event("form_viewed", visit_id=visit_id, rep_code=rep_code,
-              brand_slug=brand_slug or "",
-              payload={
-                  "rep_resolved": bool(rep_info),
-                  "client_name": client_name,
-                  "entry_path": request.path,
-                  "referrer": (request.referrer or "")[:300] or None,
-              })
+              brand_slug=brand_slug or "", payload=payload)
 
     return render_template(
         "form.html",
@@ -1991,7 +2018,8 @@ def submit_application():
     log_event("application_submitted", application_id=submission_id,
               visit_id=visit_id, rep_code=rep_code,
               payload={"loan_amount": loan_amount, "owners": len(owners),
-                       "rep_resolved": bool(rep_info), "path": "wizard"})
+                       "path": "wizard",
+                       **({"rep_resolved": bool(rep_info)} if rep_code else {})})
 
     # Lead summary to rep/support/processing — independent of the PDF pipeline.
     _queue_lead_summary_email(form, submission_id, rep_info)
@@ -2266,7 +2294,8 @@ def submit():
     log_event("application_submitted", application_id=submission_id,
               visit_id=visit_id, rep_code=rep_code,
               payload={"loan_amount": loan_amount, "owners": len(owners),
-                       "rep_resolved": bool(rep_info), "path": "legacy"})
+                       "path": "legacy",
+                       **({"rep_resolved": bool(rep_info)} if rep_code else {})})
 
     # Lead summary to rep/support/processing — independent of the PDF pipeline.
     _queue_lead_summary_email(form, submission_id, rep_info)
@@ -3216,6 +3245,162 @@ def api_brands_deactivate(slug: str):
         return jsonify({"error": "Failed to deactivate brand."}), 500
     _invalidate_brand_cache()
     return jsonify({"ok": True})
+
+
+# -------------------- Activity Dashboard --------------------
+# The per-application timeline answers "what happened to this lead". This
+# answers the question it cannot: what happened to everyone who opened a rep
+# link and never became a lead at all. Those visits carry a visit_id and no
+# application_id, so they appear nowhere else in the admin UI.
+ACTIVITY_WINDOWS = (1, 7, 30, 90)      # days; anything else snaps to 7
+ACTIVITY_MAX_EVENTS = 20000            # ceiling on one page load
+ACTIVITY_FEED_LIMIT = 60               # recent events shown raw
+ACTIVITY_VISIT_LIMIT = 100             # recent visits listed
+
+
+def _visit_rows(days: int) -> tuple[list, list, bool]:
+    """Every applicant event in the window, newest first, plus the raw feed.
+
+    Aggregated in Python rather than SQL because PostgREST cannot GROUP BY, and
+    a database view would mean a second migration to apply before this page
+    worked at all -- which is exactly the deploy-ordering trap the rest of this
+    feature avoids. At current volume (a few hundred form views a week) the
+    whole window is a cheap single read. If it ever stops being cheap, the fix
+    is a Postgres view returning the shape assembled below.
+    """
+    since = (datetime.now(EASTERN) - timedelta(days=days)).isoformat()
+    res = (_events_sb.table("application_events")
+           .select("id, created_at, event_type, actor, application_id, "
+                   "visit_id, rep_code, brand_slug, ip, user_agent, payload")
+           .gte("created_at", since)
+           .order("id", desc=True)
+           .limit(ACTIVITY_MAX_EVENTS)
+           .execute())
+    rows = res.data or []
+    return rows, rows[:ACTIVITY_FEED_LIMIT], len(rows) >= ACTIVITY_MAX_EVENTS
+
+
+def _summarize_visits(rows: list) -> dict:
+    """Fold raw events into one record per visit, then per rep link."""
+    visits: dict = {}
+    for r in reversed(rows):                       # oldest first, so first-seen wins
+        if r.get("actor") != "applicant":
+            continue                               # admin clicks are not link opens
+        vid = r.get("visit_id")
+        if not vid:
+            continue
+        v = visits.setdefault(vid, {
+            "visit_id": vid, "opened_at": None, "last_at": None,
+            "rep_code": None, "brand_slug": None, "furthest_step": 1,
+            "submitted": False, "application_id": None, "abandoned": False,
+            "rep_resolved": None, "ip": None, "user_agent": None, "events": 0,
+        })
+        v["events"] += 1
+        v["last_at"] = r["created_at"]
+        payload = r.get("payload") or {}
+        if r["event_type"] == "form_viewed":
+            v["opened_at"] = v["opened_at"] or r["created_at"]
+            v["rep_code"] = r.get("rep_code")
+            v["brand_slug"] = r.get("brand_slug")
+            v["ip"], v["user_agent"] = r.get("ip"), r.get("user_agent")
+            # Absent on a direct visit -- only a link that carried a code can
+            # have dropped one.
+            v["rep_resolved"] = payload.get("rep_resolved")
+        step = payload.get("step")
+        if isinstance(step, int):
+            v["furthest_step"] = max(v["furthest_step"], step)
+        if r["event_type"] == "form_abandoned":
+            v["abandoned"] = True
+        if r["event_type"] == "application_submitted":
+            v["submitted"] = True
+            v["application_id"] = r.get("application_id")
+
+    # Only visits that actually started at the form. A visit first seen
+    # mid-journey (an old session beaconing after a deploy) has no open to count.
+    seen = [v for v in visits.values() if v["opened_at"]]
+
+    by_rep: dict = {}
+    for v in seen:
+        key = v["rep_code"] or ""
+        g = by_rep.setdefault(key, {
+            "rep_code": v["rep_code"], "opens": 0, "submitted": 0,
+            "dropped": 0, "unresolved": 0, "step_total": 0,
+        })
+        g["opens"] += 1
+        g["step_total"] += v["furthest_step"]
+        if v["submitted"]:
+            g["submitted"] += 1
+        else:
+            g["dropped"] += 1
+        if v["rep_resolved"] is False:
+            g["unresolved"] += 1              # code was present and did not resolve
+
+    for g in by_rep.values():
+        opens = g["opens"] or 1
+        g["conversion"] = round(100.0 * g["submitted"] / opens, 1)
+        g["avg_step"] = round(g.pop("step_total") / opens, 1)
+
+    daily: dict = {}
+    for v in seen:
+        day = v["opened_at"][:10]
+        d = daily.setdefault(day, {"date": day, "opens": 0, "submitted": 0})
+        d["opens"] += 1
+        if v["submitted"]:
+            d["submitted"] += 1
+
+    submitted = sum(1 for v in seen if v["submitted"])
+    return {
+        "totals": {
+            "opens": len(seen),
+            "submitted": submitted,
+            "dropped": len(seen) - submitted,
+            "conversion": round(100.0 * submitted / len(seen), 1) if seen else 0.0,
+            "unresolved": sum(1 for v in seen if v["rep_resolved"] is False),
+        },
+        "by_rep": sorted(by_rep.values(), key=lambda g: (-g["opens"], g["rep_code"] or "")),
+        "daily": [daily[k] for k in sorted(daily)],
+        "visits": sorted(seen, key=lambda v: v["opened_at"], reverse=True)[:ACTIVITY_VISIT_LIMIT],
+    }
+
+
+@app.route("/api/activity/summary")
+@admin_required
+def api_activity_summary():
+    try:
+        days = int(request.args.get("days", "7"))
+    except ValueError:
+        days = 7
+    if days not in ACTIVITY_WINDOWS:
+        days = 7
+
+    if not _events_table_ok:
+        return jsonify({"available": False,
+                        "reason": "Activity tracing is off — the "
+                                  "application_events table is missing."}), 200
+    try:
+        rows, feed, truncated = _visit_rows(days)
+    except Exception as exc:
+        log.warning("Activity summary failed: %s", exc)
+        return jsonify({"available": False,
+                        "reason": "Could not read the activity trail."}), 200
+
+    out = _summarize_visits(rows)
+    out.update({
+        "available": True,
+        "window_days": days,
+        "truncated": truncated,
+        "event_count": len(rows),
+        "feed": feed,
+        "generated_at": datetime.now(EASTERN).isoformat(),
+    })
+    return jsonify(out)
+
+
+@app.route("/admin/activity")
+@admin_required
+def admin_activity():
+    return send_from_directory(str(APP_DIR / "public"), "activity.html")
+
 
 # -------------------- Admin Login --------------------
 @app.route("/login", methods=["GET", "POST"])
