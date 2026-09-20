@@ -83,6 +83,41 @@
       opacity: .4;
       cursor: not-allowed;
     }
+    .timeline {
+      margin: 10px 0 0;
+      padding-left: 18px;
+      border-left: 2px solid rgba(148,163,184,.18);
+    }
+    .timeline .ev {
+      position: relative;
+      padding: 7px 0;
+      border-bottom: 1px solid rgba(148,163,184,.07);
+    }
+    .timeline .ev:last-child { border-bottom: 0; }
+    /* Dot colour is the actor: blue for the merchant, amber for an admin,
+       grey for the app acting on its own (background email sends). */
+    .timeline .ev::before {
+      content: '';
+      position: absolute;
+      left: -23px;
+      top: 13px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #60a5fa;
+      box-shadow: 0 0 0 3px rgba(15,23,42,.9);
+    }
+    .timeline .ev.actor-admin::before  { background: #fbbf24; }
+    .timeline .ev.actor-system::before { background: #94a3b8; }
+    .timeline .ev.dropped::before      { background: #f87171; }
+    .timeline .what { font-size: 13px; font-weight: 500; }
+    .timeline .when { color: #94a3b8; font-size: 12px; }
+    .timeline .meta {
+      color: #94a3b8;
+      font-size: 11px;
+      margin-top: 3px;
+      word-break: break-word;
+    }
   </style>
 </head>
 <body>
@@ -325,6 +360,98 @@
     renderRows(await fetchData());
   }
 
+  // ── Activity trace ────────────────────────────────────────────────────────
+  // Replays what the applicant and the team did, from the click on the rep link
+  // through to whoever last opened this page. Events arrive oldest-first on the
+  // detail response; see supabase/migrations/20260920_add_application_events.sql.
+  const EVENT_LABELS = {
+    form_viewed:              'Opened the application form',
+    form_step_viewed:         'Reached a step',
+    form_abandoned:           'Left without submitting',
+    submission_rejected:      'Submit blocked by validation',
+    application_submitted:    'Submitted the application',
+    documents_uploaded:       'Uploaded documents',
+    thank_you_viewed:         'Viewed the thank-you page',
+    resume_link_sent:         'Credit-setup link sent',
+    resume_link_requested:    'Asked for a replacement link',
+    resume_link_opened:       'Opened the credit-setup link',
+    resume_link_rejected:     'Followed an expired or invalid link',
+    credit_setup_viewed:      'Viewed credit setup',
+    idiq_credentials_saved:   'Saved IDIQ credentials',
+    idiq_credentials_skipped: 'Skipped IDIQ credentials',
+    docs_reminder_sent:       'Missing-documents reminder sent',
+    admin_viewed_application: 'Admin opened this application',
+    admin_downloaded_pdf:     'Admin downloaded the PDF',
+  };
+
+  // Events carry a user agent and, indirectly, whatever the applicant typed
+  // into the entry URL. Nothing from this table reaches innerHTML unescaped.
+  function esc(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function fmtEventTime(ts) {
+    if (!ts) return '';
+    try {
+      return new Date(ts).toLocaleString('en-US', {
+        timeZone: 'America/New_York',
+        month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit', second: '2-digit'
+      }) + ' ET';
+    } catch { return String(ts); }
+  }
+
+  function eventDetail(e) {
+    const p = e.payload || {};
+    const bits = [];
+    if (p.step) bits.push('step ' + p.step);
+    if (p.client_name) bits.push(p.client_name);
+    if (e.rep_code) bits.push('link: ' + e.rep_code);
+    if (p.rep_resolved === false) bits.push('rep code dropped — recorded as Direct');
+    if (p.referrer) bits.push('from ' + p.referrer);
+    if (Array.isArray(p.fields) && p.fields.length) bits.push(p.fields.join(', '));
+    if (typeof p.loan_amount === 'number') bits.push(fmtMoney(p.loan_amount));
+    if (Array.isArray(p.types) && p.types.length) bits.push(p.types.join(', '));
+    if (typeof p.files === 'number') bits.push(p.files + (p.files === 1 ? ' file' : ' files'));
+    if (p.failed) bits.push(p.failed + ' failed');
+    if (p.to) bits.push('to ' + p.to);
+    if (p.delivered === false) bits.push('DELIVERY FAILED');
+    if (Array.isArray(p.missing) && p.missing.length) bits.push('missing: ' + p.missing.join(', '));
+    if (p.matched === false) bits.push('no matching application');
+    if (p.reason) bits.push(p.reason);
+    if (p.page) bits.push('on ' + p.page.replace('_', '-'));
+    if (p.by) bits.push(p.by);
+    return bits.join(' · ');
+  }
+
+  function renderTimeline(events) {
+    const head = '<h4 style="margin-top:16px">Activity Trace</h4>';
+    if (!events || !events.length) {
+      // Applications submitted before this shipped have no trail, and saying so
+      // beats an empty box that reads like nothing ever happened.
+      return head + '<p class="lead">No activity recorded for this application.</p>';
+    }
+    const rows = events.map(function (e) {
+      const p = e.payload || {};
+      const actor = e.actor || 'applicant';
+      const dropped = (e.event_type === 'form_abandoned'
+                       || p.rep_resolved === false
+                       || p.delivered === false);
+      const label = EVENT_LABELS[e.event_type] || e.event_type;
+      const detail = eventDetail(e);
+      const trailer = [e.ip, e.user_agent].filter(Boolean).join(' · ');
+      return `
+        <div class="ev actor-${esc(actor)}${dropped ? ' dropped' : ''}">
+          <div class="what">${esc(label)}</div>
+          <div class="when">${esc(fmtEventTime(e.created_at))} · ${esc(actor)}${detail ? ' · ' + esc(detail) : ''}</div>
+          ${trailer ? `<div class="meta">${esc(trailer)}</div>` : ''}
+        </div>`;
+    }).join('');
+    return head + '<div class="timeline">' + rows + '</div>';
+  }
+
   // Active submission context — feeds the "Resend credit link" modal
   let activeSubmission = null;
 
@@ -387,6 +514,8 @@
           <p class="lead" style="color:#f87171">Lookup failed: ${lk.lookup_error || 'Unknown error'}</p>`;
         return '';
       })()}
+
+      ${renderTimeline(data.events)}
 
       <h4 style="margin-top:16px">Bank Statements</h4>
       <div class="pdf-grid">

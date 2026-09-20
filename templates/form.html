@@ -601,6 +601,35 @@
 
       function pageByNum(n) { return pages.find(p => Number(p.dataset.page) === n); }
 
+      // ── Activity beacon ──────────────────────────────────────────────────
+      // Reports how far up the wizard the applicant got, and whether they left
+      // without submitting. Deliberately carries no identity: the server reads
+      // the visit off the session cookie, so there is nothing here worth
+      // forging and nothing to correlate if the request is intercepted.
+      // Wrapped in try/catch and fired as a beacon because tracing must never
+      // block, slow, or break the form it is watching.
+      const csrfEl = form.querySelector('input[name="csrf_token"]');
+      let furthestStep = 1;
+      let submitted = false;
+
+      function beacon(eventType, extra) {
+        try {
+          const fd = new FormData();
+          fd.append('event_type', eventType);
+          if (csrfEl) fd.append('csrf_token', csrfEl.value);
+          Object.keys(extra || {}).forEach(function (k) { fd.append(k, extra[k]); });
+          if (navigator.sendBeacon) navigator.sendBeacon('/api/activity', fd);
+          else fetch('/api/activity', { method: 'POST', body: fd, keepalive: true });
+        } catch (e) { /* never surface tracing failures to the applicant */ }
+      }
+
+      // pagehide rather than visibilitychange: switching tabs is not giving up,
+      // and counting it as abandonment would bury the real drop-offs.
+      window.addEventListener('pagehide', function () {
+        if (submitted) return;
+        beacon('form_abandoned', { step: furthestStep });
+      });
+
       function updateProgress(n) {
         stepEls.forEach(el => {
           const num = Number(el.dataset.step);
@@ -613,6 +642,11 @@
       function show(n) {
         pages.forEach(p => p.classList.toggle('active', Number(p.dataset.page) === n));
         current = n;
+        if (n > furthestStep) furthestStep = n;
+        // Page 1 is not reported here: the server already logged form_viewed
+        // when it rendered this page, and show() is not called for the first
+        // page on load.
+        beacon('form_step_viewed', { step: n });
         updateProgress(n);
         // Scroll progress bar / page top into view
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -703,6 +737,7 @@
           if (data.success) {
             document.getElementById('submissionId').value = data.submission_id;
             window.__submissionId = data.submission_id;
+            submitted = true;   // leaving from here on is not abandonment
             show(current + 1);
           } else {
             alert(data.error || 'Something went wrong. Please try again.');
