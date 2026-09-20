@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin — Link Activity</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../static/styles.css">
+  <style>
+    .nav-links { display:flex; gap:12px; margin-top:16px; flex-wrap:wrap; }
+    .nav-link {
+      display:inline-flex; align-items:center; gap:6px; padding:8px 14px;
+      background:rgba(96,165,250,.1); border:1px solid rgba(96,165,250,.25);
+      border-radius:10px; color:#60a5fa; text-decoration:none;
+      font-size:13px; font-weight:500; transition:all .2s;
+    }
+    .nav-link:hover { background:rgba(96,165,250,.15); border-color:rgba(96,165,250,.4); }
+
+    .controls-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .seg { display:inline-flex; border:1px solid rgba(148,163,184,.22); border-radius:10px; overflow:hidden; }
+    .seg button {
+      background:transparent; border:0; color:#94a3b8; padding:7px 13px;
+      font-size:13px; font-family:inherit; cursor:pointer;
+    }
+    .seg button + button { border-left:1px solid rgba(148,163,184,.18); }
+    .seg button.on { background:rgba(96,165,250,.16); color:#bfdbfe; font-weight:600; }
+    .sel {
+      background:rgba(15,23,42,.55); border:1px solid rgba(148,163,184,.2);
+      border-radius:10px; padding:8px 12px; color:var(--text);
+      font-size:13px; font-family:inherit; max-width:190px;
+    }
+    .toggle { display:inline-flex; align-items:center; gap:7px; color:#94a3b8; font-size:13px; }
+
+    /* ── KPI tiles ──────────────────────────────────────────────────────────
+       Four headline magnitudes. No chart: a single number per tile is the form
+       that reads fastest, and a four-slice pie would say less, more slowly. */
+    .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+    .tile {
+      background:rgba(15,23,42,.45); border:1px solid rgba(148,163,184,.14);
+      border-radius:14px; padding:14px 16px;
+    }
+    .tile .k { color:#94a3b8; font-size:11px; letter-spacing:.06em; text-transform:uppercase; }
+    /* Values wear text ink, never a series colour -- the swatch beside a label
+       carries identity, the number stays legible. */
+    .tile .v { font-size:26px; font-weight:700; margin-top:6px; color:var(--text); font-variant-numeric:tabular-nums; }
+    .tile .sub { color:#94a3b8; font-size:11px; margin-top:3px; }
+    .tile.warn { border-color:rgba(251,191,36,.35); background:rgba(251,191,36,.06); }
+
+    /* ── Chart ─────────────────────────────────────────────────────────────── */
+    .chart-head { display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap; margin:20px 0 6px; }
+    .chart-head h3 { margin:0; font-size:14px; font-weight:600; }
+    .legend { display:flex; gap:14px; align-items:center; color:#94a3b8; font-size:12px; }
+    .legend i { width:10px; height:10px; border-radius:3px; display:inline-block; margin-right:5px; vertical-align:-1px; }
+    .chart { width:100%; height:auto; display:block; overflow:visible; }
+    .chart .grid { stroke:rgba(148,163,184,.14); stroke-width:1; }
+    .chart .axis { fill:#94a3b8; font-size:10px; }
+    .chart .rowlab { fill:#cbd5e1; font-size:11px; }
+    .chart .rowval { fill:#94a3b8; font-size:11px; font-weight:600; }
+    .chart .hit { fill:transparent; cursor:default; }
+    .chart .hit:hover ~ .barcol rect, .chart g.col:hover rect.seg { filter:brightness(1.18); }
+    .tip {
+      position:fixed; z-index:50; pointer-events:none; display:none;
+      background:rgba(2,6,23,.96); border:1px solid rgba(148,163,184,.3);
+      border-radius:10px; padding:8px 10px; font-size:12px; color:var(--text);
+      box-shadow:0 10px 30px rgba(0,0,0,.5); white-space:nowrap;
+    }
+    .tip .t { color:#94a3b8; font-size:11px; margin-bottom:4px; }
+    .tip .r { display:flex; gap:8px; justify-content:space-between; }
+    .tip .r b { font-variant-numeric:tabular-nums; }
+
+    /* ── Status labels ──────────────────────────────────────────────────────
+       The validator puts submitted-green and dropped-red at ΔE 6.5 for deutan
+       vision, which is under the safe floor. So state is never colour alone:
+       every pill carries its word, and the tables carry the numbers. */
+    .pill { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:500;
+            padding:3px 9px; border-radius:999px; border:1px solid transparent; white-space:nowrap; }
+    .pill i { width:7px; height:7px; border-radius:50%; display:inline-block; }
+    .pill.ok   { color:#6ee7b7; background:rgba(52,211,153,.1);  border-color:rgba(52,211,153,.3); }
+    .pill.ok i { background:#34d399; }
+    .pill.no   { color:#cbd5e1; background:rgba(148,163,184,.1); border-color:rgba(148,163,184,.28); }
+    .pill.no i { background:#94a3b8; }
+    .pill.bad  { color:#fca5a5; background:rgba(248,113,113,.1); border-color:rgba(248,113,113,.3); }
+    .pill.bad i{ background:#f87171; }
+
+    td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+    .bar-mini { display:inline-block; height:6px; border-radius:3px; background:#60a5fa; vertical-align:1px; min-width:2px; }
+    .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; color:#94a3b8; }
+
+    .feed .ev { padding:7px 0; border-bottom:1px solid rgba(148,163,184,.07); display:flex; gap:10px; align-items:baseline; }
+    .feed .ev:last-child { border-bottom:0; }
+    .feed .when { color:#94a3b8; font-size:11px; min-width:74px; font-variant-numeric:tabular-nums; }
+    .feed .what { font-size:13px; }
+    .feed .meta { color:#94a3b8; font-size:11px; }
+    .dot { width:8px; height:8px; border-radius:50%; display:inline-block; background:#60a5fa; flex:0 0 auto; }
+    .dot.admin { background:#fbbf24; } .dot.system { background:#94a3b8; }
+
+    .empty { color:#94a3b8; font-size:13px; padding:18px 0; }
+    .notice { border:1px solid rgba(251,191,36,.35); background:rgba(251,191,36,.07);
+              border-radius:12px; padding:12px 14px; color:#fde68a; font-size:13px; }
+  </style>
+</head>
+<body>
+  <header class="pc-header">
+    <div class="brand">
+      <span class="badge">PATHWAY CATALYST</span>
+      <h1>Link Activity</h1>
+    </div>
+    <p class="lead">What happens after a rep link is opened — including the visits that never became applications.</p>
+    <div class="nav-links">
+      <a href="/admin" class="nav-link">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/>
+        </svg>
+        Submissions
+      </a>
+      <a href="/admin/reps" class="nav-link">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+        Rep Links
+      </a>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="card">
+      <div class="card-header">
+        <h2>Overview</h2>
+        <div class="controls-row">
+          <div class="seg" id="windowSeg">
+            <button data-days="1">24h</button>
+            <button data-days="7" class="on">7d</button>
+            <button data-days="30">30d</button>
+            <button data-days="90">90d</button>
+          </div>
+          <select class="sel" id="repFilter"><option value="">All rep links</option></select>
+          <label class="toggle"><input type="checkbox" id="autoRefresh" checked /> Auto-refresh</label>
+          <button class="btn ghost" id="refreshBtn">Refresh</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="notice"></div>
+        <div class="tiles" id="tiles"></div>
+        <div id="chartBlock"></div>
+        <div class="mono" id="stamp" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>By rep link</h2></div>
+      <div class="card-body">
+        <div id="funnelBlock"></div>
+        <div class="table-wrap" id="repTable" style="margin-top:18px"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Recent visits</h2></div>
+      <div class="card-body"><div class="table-wrap" id="visitTable"></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Live feed</h2></div>
+      <div class="card-body"><div class="feed" id="feed"></div></div>
+    </div>
+  </main>
+
+  <div class="tip" id="tip"></div>
+
+  <script>
+  // Everything rendered here comes out of application_events, which stores user
+  // agents and whatever an applicant put in the entry URL. Nothing reaches
+  // innerHTML unescaped.
+  function esc(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  function fmtTime(ts) {
+    if (!ts) return '';
+    try {
+      return new Date(ts).toLocaleString('en-US', { timeZone:'America/New_York',
+        month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+    } catch { return String(ts); }
+  }
+  function fmtClock(ts) {
+    if (!ts) return '';
+    try {
+      return new Date(ts).toLocaleTimeString('en-US', { timeZone:'America/New_York',
+        hour:'numeric', minute:'2-digit', second:'2-digit' });
+    } catch { return String(ts); }
+  }
+  function dayLabel(d) {
+    const [y,m,dd] = d.split('-').map(Number);
+    return new Date(Date.UTC(y, m-1, dd)).toLocaleDateString('en-US',
+      { timeZone:'UTC', month:'short', day:'numeric' });
+  }
+
+  const EVENT_LABELS = {
+    form_viewed:'Opened the form', form_step_viewed:'Reached a step',
+    form_abandoned:'Left without submitting', submission_rejected:'Submit blocked by validation',
+    application_submitted:'Submitted the application', documents_uploaded:'Uploaded documents',
+    thank_you_viewed:'Viewed thank-you page', resume_link_sent:'Credit-setup link sent',
+    resume_link_requested:'Asked for a replacement link', resume_link_opened:'Opened credit-setup link',
+    resume_link_rejected:'Followed a dead link', credit_setup_viewed:'Viewed credit setup',
+    idiq_credentials_saved:'Saved IDIQ credentials', idiq_credentials_skipped:'Skipped IDIQ credentials',
+    docs_reminder_sent:'Docs reminder sent', admin_viewed_application:'Admin opened an application',
+    admin_downloaded_pdf:'Admin downloaded a PDF', admin_signed_in:'Admin signed in',
+    admin_sign_in_failed:'Failed admin sign-in',
+  };
+
+  let state = { days:7, rep:'', data:null };
+  let timer = null;
+
+  // ── Chart ────────────────────────────────────────────────────────────────
+  // One measure (visits that opened the form) split into the two states it can
+  // end in, so the stack sums to the day's opens rather than to nothing. Two
+  // series, so a legend is always present. "No submit" is the remainder, not a
+  // competing identity, so it takes a neutral rather than a second hue.
+  const C_SUBMIT = '#60a5fa', C_OPEN = '#64748b';
+
+  function renderChart(daily) {
+    const block = document.getElementById('chartBlock');
+    if (!daily || !daily.length) { block.innerHTML = ''; return; }
+
+    const W = 760, H = 210, L = 38, R = 10, T = 10, B = 26;
+    const pw = W - L - R, ph = H - T - B;
+    const max = Math.max(1, ...daily.map(d => d.opens));
+    // A tick ceiling on a round number, so the axis reads in whole visits.
+    const step = Math.max(1, Math.ceil(max / 3));
+    const top = step * 3;
+    const n = daily.length;
+    const slot = pw / n;
+    const bw = Math.max(3, Math.min(46, slot - (n > 40 ? 1 : 6)));
+    const y = v => T + ph - (v / top) * ph;
+
+    let grid = '', bars = '';
+    for (let i = 0; i <= 3; i++) {
+      const v = step * i, yy = y(v);
+      grid += `<line class="grid" x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}"/>`
+            + `<text class="axis" x="${L-7}" y="${yy+3}" text-anchor="end">${v}</text>`;
+    }
+
+    daily.forEach((d, i) => {
+      const cx = L + slot * i + slot / 2;
+      const x = cx - bw / 2;
+      const sub = d.submitted, rest = Math.max(0, d.opens - d.submitted);
+      // 2px surface gap between the two fills so the boundary reads as a break
+      // rather than a colour change.
+      const hSub  = sub  ? Math.max(2, (sub  / top) * ph) : 0;
+      const hRest = rest ? Math.max(2, (rest / top) * ph) : 0;
+      const yBase = T + ph;
+      const ySub  = yBase - hSub;
+      const yRest = ySub - hRest - (hSub && hRest ? 2 : 0);
+      // Rounded 4px cap on the top-most segment only; everything else is
+      // anchored square to the baseline.
+      if (hRest) bars += `<rect class="seg" x="${x}" y="${yRest}" width="${bw}" height="${hRest}" rx="4" fill="${C_OPEN}"/>`;
+      if (hSub)  bars += `<rect class="seg" x="${x}" y="${ySub}" width="${bw}" height="${hSub}" ${hRest?'':'rx="4"'} fill="${C_SUBMIT}"/>`;
+      // Hit target spans the whole slot — bigger than the mark, per the spec.
+      bars += `<rect class="hit" x="${L + slot*i}" y="${T}" width="${slot}" height="${ph}"`
+           +  ` data-i="${i}" tabindex="0"/>`;
+    });
+
+    // Selective labels: first, last, and every nth — never one per bar.
+    const every = Math.max(1, Math.ceil(n / 8));
+    let xlab = '';
+    daily.forEach((d, i) => {
+      if (i !== 0 && i !== n-1 && i % every) return;
+      xlab += `<text class="axis" x="${L + slot*i + slot/2}" y="${H-8}" text-anchor="middle">${esc(dayLabel(d.date))}</text>`;
+    });
+
+    block.innerHTML = `
+      <div class="chart-head">
+        <h3>Form opens per day</h3>
+        <div class="legend">
+          <span><i style="background:${C_SUBMIT}"></i>Completed</span>
+          <span><i style="background:${C_OPEN}"></i>Not completed</span>
+        </div>
+      </div>
+      <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"
+           role="img" aria-label="Form opens per day, split by whether the visit completed an application">
+        ${grid}${bars}${xlab}
+      </svg>`;
+
+    const tip = document.getElementById('tip');
+    block.querySelectorAll('.hit').forEach(el => {
+      const d = daily[Number(el.dataset.i)];
+      const show = e => {
+        tip.innerHTML = `<div class="t">${esc(dayLabel(d.date))}</div>`
+          + `<div class="r"><span>Opens</span><b>${d.opens}</b></div>`
+          + `<div class="r"><span>Completed</span><b>${d.submitted}</b></div>`
+          + `<div class="r"><span>Not completed</span><b>${d.opens - d.submitted}</b></div>`;
+        tip.style.display = 'block';
+        const r = el.getBoundingClientRect();
+        tip.style.left = Math.min(window.innerWidth - tip.offsetWidth - 12, r.left) + 'px';
+        tip.style.top  = Math.max(8, r.top - tip.offsetHeight - 8) + 'px';
+      };
+      const hide = () => { tip.style.display = 'none'; };
+      el.addEventListener('mouseenter', show);
+      el.addEventListener('focus', show);
+      el.addEventListener('mouseleave', hide);
+      el.addEventListener('blur', hide);
+    });
+  }
+
+  // ── Per-link funnel ──────────────────────────────────────────────────────
+  // One row per link, bar length = opens, split by how the visit ended. The
+  // three segments sum to the bar, so the composition and the magnitude are
+  // the same mark -- no second chart to cross-reference.
+  //
+  // Horizontal because the categories are names: a vertical version would set
+  // "juliette" on its side. Amber against blue clears CVD separation at ΔE 29.9
+  // (protan); the grey tail is the remainder, so it takes a neutral rather than
+  // competing for identity.
+  const C_DONE = '#60a5fa', C_LEFT = '#fbbf24', C_BOUNCE = '#64748b';
+
+  function renderFunnel(rows) {
+    const block = document.getElementById('funnelBlock');
+    if (!rows || !rows.length) { block.innerHTML = ''; return; }
+
+    const LW = 92, VW = 46, R = 8, rowH = 26, gap = 9, T = 8, B = 24;
+    const W = 760, plotW = W - LW - VW - R;
+    const H = T + rows.length * (rowH + gap) + B;
+    const max = Math.max(1, ...rows.map(r => r.opens));
+    const tick = Math.max(1, Math.ceil(max / 4));
+    const top = tick * 4;
+    const x = v => LW + (v / top) * plotW;
+
+    let grid = '';
+    for (let i = 0; i <= 4; i++) {
+      const v = tick * i;
+      grid += `<line class="grid" x1="${x(v)}" y1="${T}" x2="${x(v)}" y2="${H-B+4}"/>`
+           +  `<text class="axis" x="${x(v)}" y="${H-B+16}" text-anchor="middle">${v}</text>`;
+    }
+
+    let bars = '';
+    rows.forEach((r, i) => {
+      const y = T + i * (rowH + gap);
+      const segs = [
+        ['done',   r.submitted,          C_DONE],
+        ['left',   r.left_after_details, C_LEFT],
+        ['bounce', r.bounced,            C_BOUNCE],
+      ].filter(sg => sg[1] > 0);
+      let cx = LW;
+      segs.forEach((sg, k) => {
+        const w = Math.max(2, (sg[1] / top) * plotW);
+        const last = k === segs.length - 1;
+        bars += `<rect class="seg" x="${cx}" y="${y}" width="${w}" height="${rowH}"`
+             +  ` ${last ? 'rx="4"' : ''} fill="${sg[2]}"/>`;
+        // 2px surface gap so a boundary reads as a break, not a colour change.
+        cx += w + 2;
+      });
+      bars += `<text class="rowlab" x="${LW-8}" y="${y+rowH/2+4}" text-anchor="end">`
+           +  `${esc(r.rep_code || 'direct')}</text>`
+           +  `<text class="rowval" x="${Math.min(W-R, cx+6)}" y="${y+rowH/2+4}">${r.opens}</text>`
+           +  `<rect class="hit" x="${LW}" y="${y-3}" width="${plotW}" height="${rowH+6}" data-i="${i}" tabindex="0"/>`;
+    });
+
+    block.innerHTML = `
+      <div class="chart-head">
+        <h3>How each link's opens ended</h3>
+        <div class="legend">
+          <span><i style="background:${C_DONE}"></i>Completed</span>
+          <span><i style="background:${C_LEFT}"></i>Left after entering details</span>
+          <span><i style="background:${C_BOUNCE}"></i>Left on first page</span>
+        </div>
+      </div>
+      <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"
+           role="img" aria-label="Opens per rep link, split by how each visit ended">
+        ${grid}${bars}
+      </svg>`;
+
+    const tip = document.getElementById('tip');
+    block.querySelectorAll('.hit').forEach(el => {
+      const r = rows[Number(el.dataset.i)];
+      const show = () => {
+        tip.innerHTML = `<div class="t">${esc(r.rep_code || 'direct')} · ${r.opens} opens</div>`
+          + `<div class="r"><span>Completed</span><b>${r.submitted}</b></div>`
+          + `<div class="r"><span>Left after details</span><b>${r.left_after_details}</b></div>`
+          + `<div class="r"><span>Left on first page</span><b>${r.bounced}</b></div>`
+          + `<div class="r"><span>Step views</span><b>${r.step_views}</b></div>`;
+        tip.style.display = 'block';
+        const b = el.getBoundingClientRect();
+        tip.style.left = Math.min(window.innerWidth - tip.offsetWidth - 12, b.left + 40) + 'px';
+        tip.style.top  = Math.max(8, b.top - tip.offsetHeight - 6) + 'px';
+      };
+      const hide = () => { tip.style.display = 'none'; };
+      el.addEventListener('mouseenter', show); el.addEventListener('focus', show);
+      el.addEventListener('mouseleave', hide); el.addEventListener('blur', hide);
+    });
+  }
+
+  // ── Tables ───────────────────────────────────────────────────────────────
+  function renderTiles(t) {
+    const tiles = [
+      ['Form opens', t.opens, `${t.step_views || 0} step views inside the form`],
+      ['Completed', t.submitted, 'submitted an application'],
+      ['Left after details', t.left_after_details, 'got past page 1, never finished'],
+      ['Left on first page', t.bounced, 'opened and went no further'],
+      ['Conversion', Number(t.conversion).toFixed(1) + '%', 'of opens that completed'],
+    ];
+    let html = tiles.map(([k,v,s]) =>
+      `<div class="tile"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div><div class="sub">${esc(s)}</div></div>`
+    ).join('');
+    // Only surfaced when it is non-zero: a rep code that was on the link and
+    // did not resolve is a lead that silently landed as Direct.
+    if (t.unresolved) {
+      html += `<div class="tile warn"><div class="k">Dropped rep codes</div>`
+            + `<div class="v">${esc(t.unresolved)}</div>`
+            + `<div class="sub">link carried a code that no longer resolves</div></div>`;
+    }
+    document.getElementById('tiles').innerHTML = html;
+  }
+
+  function renderRepTable(rows, totals) {
+    const el = document.getElementById('repTable');
+    if (!rows.length) { el.innerHTML = '<p class="empty">No form opens in this window.</p>'; return; }
+    const max = Math.max(...rows.map(r => r.opens));
+    el.innerHTML = `
+      <table class="table">
+        <thead><tr>
+          <th>Rep link</th><th class="num">Opens</th><th class="num">Completed</th>
+          <th class="num">Left after details</th><th class="num">Left on page 1</th>
+          <th class="num">Conversion</th><th class="num">Avg step</th><th>Share</th>
+        </tr></thead>
+        <tbody>${rows.map(r => `
+          <tr>
+            <td>${r.rep_code
+                  ? `<span class="pill ok"><i></i>${esc(r.rep_code)}</span>`
+                  : '<span class="pill no"><i></i>direct</span>'}
+                ${r.unresolved ? `<span class="pill bad" title="the link carried a code that no longer resolves, so the lead was recorded as Direct"><i></i>${r.unresolved} not credited</span>` : ''}</td>
+            <td class="num">${r.opens}</td>
+            <td class="num">${r.submitted}</td>
+            <td class="num">${r.left_after_details}</td>
+            <td class="num">${r.bounced}</td>
+            <td class="num">${r.conversion.toFixed(1)}%</td>
+            <td class="num">${r.avg_step.toFixed(1)}</td>
+            <td><span class="bar-mini" style="width:${Math.round(60 * r.opens / max)}px"></span></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  function renderVisits(rows) {
+    const el = document.getElementById('visitTable');
+    if (!rows.length) { el.innerHTML = '<p class="empty">No visits in this window.</p>'; return; }
+    el.innerHTML = `
+      <table class="table">
+        <thead><tr>
+          <th>Opened</th><th>Rep link</th><th>Brand</th>
+          <th class="num">Furthest step</th><th>Outcome</th><th>Application</th>
+        </tr></thead>
+        <tbody>${rows.map(v => `
+          <tr>
+            <td>${esc(fmtTime(v.opened_at))}</td>
+            <td>${v.rep_code
+                  ? esc(v.rep_code) + (v.rep_resolved === false
+                      ? ' <span class="pill bad" title="code no longer resolves — recorded as Direct"><i></i>not credited</span>' : '')
+                  : '<span class="mono">direct</span>'}</td>
+            <td class="mono">${esc(v.brand_slug || '—')}</td>
+            <td class="num">${v.furthest_step}</td>
+            <td>${v.submitted
+                  ? '<span class="pill ok"><i></i>completed</span>'
+                  : '<span class="pill no"><i></i>not completed</span>'}</td>
+            <td>${v.application_id ? `<a class="nav-link" style="padding:3px 9px" href="/admin#${v.application_id}">#${v.application_id}</a>` : '<span class="mono">—</span>'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  function renderFeed(rows) {
+    const el = document.getElementById('feed');
+    if (!rows || !rows.length) { el.innerHTML = '<p class="empty">Nothing recorded yet.</p>'; return; }
+    el.innerHTML = rows.map(e => {
+      const p = e.payload || {};
+      const bits = [];
+      if (p.step) bits.push('step ' + p.step);
+      if (e.rep_code) bits.push('link: ' + e.rep_code);
+      if (p.rep_resolved === false) bits.push('rep code dropped');
+      if (e.application_id) bits.push('#' + e.application_id);
+      if (p.to) bits.push('to ' + p.to);
+      if (p.by) bits.push(p.by);
+      if (p.delivered === false) bits.push('DELIVERY FAILED');
+      return `<div class="ev">
+          <span class="dot ${esc(e.actor)}"></span>
+          <span class="when">${esc(fmtClock(e.created_at))}</span>
+          <span class="what">${esc(EVENT_LABELS[e.event_type] || e.event_type)}</span>
+          <span class="meta">${esc(bits.join(' · '))}</span>
+        </div>`;
+    }).join('');
+  }
+
+  function applyRepFilter(data) {
+    if (!state.rep) return data;
+    const keep = v => (v.rep_code || '') === state.rep;
+    const visits = data.visits.filter(keep);
+    const by_rep = data.by_rep.filter(r => (r.rep_code || '') === state.rep);
+    const g = by_rep[0] || { opens:0, submitted:0, dropped:0, unresolved:0,
+                             left_after_details:0, bounced:0, step_views:0 };
+    const daily = {};
+    visits.forEach(v => {
+      const d = (daily[v.opened_at.slice(0,10)] ||= { date:v.opened_at.slice(0,10), opens:0, submitted:0 });
+      d.opens++; if (v.submitted) d.submitted++;
+    });
+    return { ...data, visits, by_rep,
+      totals: { opens:g.opens, submitted:g.submitted, dropped:g.dropped, unresolved:g.unresolved,
+                left_after_details:g.left_after_details, bounced:g.bounced,
+                step_views:g.step_views,
+                conversion: g.opens ? Math.round(1000*g.submitted/g.opens)/10 : 0 },
+      daily: Object.keys(daily).sort().map(k => daily[k]),
+      feed: data.feed.filter(e => !e.rep_code || e.rep_code === state.rep) };
+  }
+
+  function render() {
+    const raw = state.data;
+    const notice = document.getElementById('notice');
+    if (!raw || !raw.available) {
+      notice.innerHTML = `<div class="notice">${esc((raw && raw.reason) || 'Activity data unavailable.')}</div>`;
+      ['tiles','chartBlock','repTable','visitTable','feed'].forEach(id => document.getElementById(id).innerHTML = '');
+      return;
+    }
+    notice.innerHTML = raw.truncated
+      ? `<div class="notice">Showing the most recent ${esc(raw.event_count)} events — the window holds more. Narrow the range for exact totals.</div>`
+      : '';
+
+    const sel = document.getElementById('repFilter');
+    const opts = raw.by_rep.map(r => r.rep_code).filter(Boolean);
+    sel.innerHTML = '<option value="">All rep links</option>'
+      + opts.map(c => `<option value="${esc(c)}"${c===state.rep?' selected':''}>${esc(c)}</option>`).join('');
+
+    const d = applyRepFilter(raw);
+    renderTiles(d.totals);
+    renderChart(d.daily);
+    renderFunnel(d.by_rep);
+    renderRepTable(d.by_rep, d.totals);
+    renderVisits(d.visits);
+    renderFeed(d.feed);
+    document.getElementById('stamp').textContent =
+      `${d.totals.opens} opens · ${raw.event_count} events in the last ${raw.window_days}d · updated ${fmtClock(raw.generated_at)} ET`;
+  }
+
+  async function load() {
+    try {
+      const res = await fetch('/api/activity/summary?days=' + state.days);
+      if (res.status === 401) { window.location.href = '/login?next=/admin/activity'; return; }
+      state.data = await res.json();
+    } catch (e) {
+      state.data = { available:false, reason:'Could not reach the server.' };
+    }
+    render();
+  }
+
+  document.getElementById('windowSeg').addEventListener('click', e => {
+    const b = e.target.closest('button[data-days]'); if (!b) return;
+    document.querySelectorAll('#windowSeg button').forEach(x => x.classList.toggle('on', x === b));
+    state.days = Number(b.dataset.days);
+    load();
+  });
+  document.getElementById('repFilter').addEventListener('change', e => { state.rep = e.target.value; render(); });
+  document.getElementById('refreshBtn').addEventListener('click', load);
+  document.getElementById('autoRefresh').addEventListener('change', e => schedule(e.target.checked));
+
+  function schedule(on) {
+    if (timer) { clearInterval(timer); timer = null; }
+    if (on) timer = setInterval(load, 30000);
+  }
+  schedule(true);
+  load();
+  </script>
+</body>
+</html>

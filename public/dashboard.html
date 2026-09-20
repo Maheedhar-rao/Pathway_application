@@ -128,6 +128,12 @@
     </div>
     <p class="lead">Admin-only view. Click "View" to open details and preview PDFs at the bottom.</p>
     <div class="nav-links">
+      <a href="/admin/activity" class="nav-link">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/>
+        </svg>
+        Link Activity
+      </a>
       <a href="/admin/reps" class="nav-link">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
@@ -409,7 +415,9 @@
     if (p.step) bits.push('step ' + p.step);
     if (p.client_name) bits.push(p.client_name);
     if (e.rep_code) bits.push('link: ' + e.rep_code);
-    if (p.rep_resolved === false) bits.push('rep code dropped — recorded as Direct');
+    // Only a link that actually carried a code can have dropped one; a plain
+    // direct visit records no rep_code and must not be flagged as a loss.
+    if (e.rep_code && p.rep_resolved === false) bits.push('rep code dropped — recorded as Direct');
     if (p.referrer) bits.push('from ' + p.referrer);
     if (Array.isArray(p.fields) && p.fields.length) bits.push(p.fields.join(', '));
     if (typeof p.loan_amount === 'number') bits.push(fmtMoney(p.loan_amount));
@@ -437,7 +445,7 @@
       const p = e.payload || {};
       const actor = e.actor || 'applicant';
       const dropped = (e.event_type === 'form_abandoned'
-                       || p.rep_resolved === false
+                       || (e.rep_code && p.rep_resolved === false)
                        || p.delivered === false);
       const label = EVENT_LABELS[e.event_type] || e.event_type;
       const detail = eventDetail(e);
