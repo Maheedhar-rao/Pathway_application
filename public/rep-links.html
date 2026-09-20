@@ -550,13 +550,12 @@
           </div>
         `;
       }
-      // Deactivate is the reversible retire; Delete drops the row for good.
-      // Both stay available on an inactive rep so a mistaken deactivation can
-      // be undone and a mistaken code can be cleared out.
+      // Deactivation is reversible, so an inactive rep offers Activate rather
+      // than nothing — undoing a mistaken deactivation should not need a hand
+      // edit in the database. There is no Delete: see api_reps_deactivate.
       const retireBtn = rep.active
         ? `<button class="icon-btn danger" onclick="deactivateRep('${c}', '${escapeHtml(rep.name)}')">Deactivate</button>`
         : `<button class="icon-btn" onclick="activateRep('${c}', '${escapeHtml(rep.name)}')">Activate</button>`;
-      const deleteBtn = `<button class="icon-btn danger" onclick="deleteRep('${c}', '${escapeHtml(rep.name)}')">Delete</button>`;
       return `
         <div class="rep-item${rep.active ? '' : ' inactive'}">
           <div class="rep-info">
@@ -568,7 +567,6 @@
             <button class="copy-btn" onclick="copyLink('${c}', this)">Copy Link</button>
             <button class="icon-btn" onclick="startEdit('${c}')">Edit</button>
             ${retireBtn}
-            ${deleteBtn}
           </div>
         </div>
       `;
@@ -617,30 +615,6 @@
     async function activateRep(code, name) {
       try {
         await apiWrite(`/api/reps/${encodeURIComponent(code)}`, 'PATCH', { active: true });
-        await loadReps();
-      } catch (err) {
-        alert(err.message);
-      }
-    }
-
-    // Irreversible, so it asks for the code to be typed rather than accepting a
-    // reflexive OK on a confirm() dialog.
-    async function deleteRep(code, name) {
-      const typed = prompt(
-        `Permanently delete ${name}?\n\n` +
-        `Their links stop crediting them and submit as Direct instead. Past ` +
-        `submissions keep showing ${name} — the name is stored on each ` +
-        `application, not looked up. This cannot be undone; use Deactivate if ` +
-        `you might want them back.\n\n` +
-        `Type the rep code "${code}" to confirm:`
-      );
-      if (typed === null) return;
-      if (typed.trim().toLowerCase() !== code) {
-        alert('That did not match the rep code — nothing was deleted.');
-        return;
-      }
-      try {
-        await apiWrite(`/api/reps/${encodeURIComponent(code)}?permanent=1`, 'DELETE');
         await loadReps();
       } catch (err) {
         alert(err.message);
@@ -794,14 +768,13 @@
       const defaultBtn = (b.is_default || !b.active)
         ? ''
         : `<button class="icon-btn" onclick="makeDefaultBrand('${sl}')">Make default</button>`;
-      // Delete is offered only on an inactive brand, mirroring the API rail:
-      // dropping a live brand would 404 every rep link built on it at once.
+      // An inactive brand offers Activate and nothing else — no Delete, because
+      // a brand's slug and domain are baked into every rep link built on it.
       const retireBtn = b.is_default
         ? ''
         : (b.active
             ? `<button class="icon-btn danger" onclick="deactivateBrand('${sl}', '${escapeHtml(b.name)}')">Deactivate</button>`
-            : `<button class="icon-btn" onclick="activateBrand('${sl}')">Activate</button>`
-              + `<button class="icon-btn danger" onclick="deleteBrand('${sl}', '${escapeHtml(b.name)}')">Delete</button>`);
+            : `<button class="icon-btn" onclick="activateBrand('${sl}')">Activate</button>`);
       const domainCell = b.domain
         ? `<div class="brand-domain set">${escapeHtml(b.domain)}</div>`
         : `<div class="brand-domain">no domain — /${sl} on ${escapeHtml(appHost)}</div>`;
@@ -858,29 +831,6 @@
     async function activateBrand(slug) {
       try {
         await apiWrite(`/api/brands/${encodeURIComponent(slug)}`, 'PATCH', { active: true });
-        await refreshBrands();
-      } catch (err) {
-        alert(err.message);
-      }
-    }
-
-    // Unlike deleting a rep, this does break URLs — spell out which ones.
-    async function deleteBrand(slug, name) {
-      const typed = prompt(
-        `Permanently delete ${name}?\n\n` +
-        `Every rep link built on this brand breaks at once: /${slug} starts ` +
-        `returning 404, and if the brand had a custom domain those links fall ` +
-        `back to the default brand's name. Submissions already received are ` +
-        `unaffected. This cannot be undone.\n\n` +
-        `Type the slug "${slug}" to confirm:`
-      );
-      if (typed === null) return;
-      if (typed.trim().toLowerCase() !== slug) {
-        alert('That did not match the slug — nothing was deleted.');
-        return;
-      }
-      try {
-        await apiWrite(`/api/brands/${encodeURIComponent(slug)}?permanent=1`, 'DELETE');
         await refreshBrands();
       } catch (err) {
         alert(err.message);
