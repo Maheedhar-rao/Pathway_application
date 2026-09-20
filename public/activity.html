@@ -543,18 +543,13 @@
     const sel = document.getElementById('repFilter');
     const known = (raw.known_reps || []).map(r => r.code);
     const seen = raw.by_rep.map(r => r.rep_code).filter(Boolean);
-    const withData = new Set(seen);
     const codes = known.concat(seen.filter(c => !known.includes(c)));
-    const inactive = new Set((raw.known_reps || []).filter(r => !r.active).map(r => r.code));
+    // Names only. Whether a link has traffic is what the page itself is for --
+    // annotating the menu with it made every entry read as a status report
+    // before you had chosen anything.
     sel.innerHTML = '<option value="">All rep links</option>'
-      + `<option value="${DIRECT}"${state.rep===DIRECT?' selected':''}>direct (no rep code)</option>`
-      + codes.map(c => {
-          const tags = [];
-          if (inactive.has(c)) tags.push('inactive');
-          if (!withData.has(c)) tags.push('no opens');
-          return `<option value="${esc(c)}"${c===state.rep?' selected':''}>`
-               + `${esc(c)}${tags.length ? ' — ' + tags.join(', ') : ''}</option>`;
-        }).join('');
+      + `<option value="${DIRECT}"${state.rep===DIRECT?' selected':''}>direct</option>`
+      + codes.map(c => `<option value="${esc(c)}"${c===state.rep?' selected':''}>${esc(c)}</option>`).join('');
 
     const d = applyRepFilter(raw);
     renderTiles(d.totals);
