@@ -623,6 +623,27 @@
         } catch (e) { /* never surface tracing failures to the applicant */ }
       }
 
+      function fieldValue(name) {
+        const el = form.querySelector('[name="' + name + '"]');
+        return el ? (el.value || '').trim() : '';
+      }
+
+      // Contact detail only -- the five fields page 1 already required. Never
+      // anything from later pages: no SSN, no EIN, no bank detail, no
+      // signature ever leaves the browser this way.
+      function sendIdentity() {
+        const first = fieldValue('owner_0_first'), last = fieldValue('owner_0_last');
+        const payload = {
+          name: (first + ' ' + last).trim(),
+          business: fieldValue('business_legal_name'),
+          email: fieldValue('owner_0_email'),
+          mobile: fieldValue('owner_0_mobile'),
+          amount: fieldValue('loan_amount'),
+        };
+        Object.keys(payload).forEach(k => { if (!payload[k]) delete payload[k]; });
+        if (Object.keys(payload).length) beacon('form_identity_captured', payload);
+      }
+
       // pagehide rather than visibilitychange: switching tabs is not giving up,
       // and counting it as abandonment would bury the real drop-offs.
       window.addEventListener('pagehide', function () {
@@ -707,6 +728,12 @@
         const dir = btn.dataset.nav;
         if (dir === 'next') {
           if (!validateCurrentPage()) return;
+          // Leaving page 1 forward is the first moment an abandoned
+          // application can still be followed up: page 1 requires name,
+          // business, email, mobile and amount, and validateCurrentPage has
+          // just passed, so all five are filled and valid. Sent again on a
+          // second pass so a corrected typo replaces the earlier value.
+          if (current === 1) sendIdentity();
           if (current < totalPages) show(current + 1);
         } else if (dir === 'prev') {
           if (current > 1) show(current - 1);

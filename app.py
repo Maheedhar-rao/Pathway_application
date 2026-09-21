@@ -468,7 +468,23 @@ SESSION_VISIT_APP_KEY = "visit_app_id"
 # Event types the unauthenticated beacon (/api/activity) is allowed to write.
 # Anything else is dropped: the browser may only add to the trail in ways we
 # already expect, never forge an "application_submitted" that makes it lie.
-PUBLIC_EVENT_TYPES = {"form_step_viewed", "form_abandoned"}
+PUBLIC_EVENT_TYPES = {"form_step_viewed", "form_abandoned", "form_identity_captured"}
+
+# Page 1 asks for these five and requires every one of them, so a visit that
+# reaches page 2 has them filled and browser-validated. Captured there and
+# nowhere else: it is the earliest point at which an abandoned application can
+# be followed up, and the only alternative is a half-filled lead nobody can
+# contact.
+#
+# This is a deliberate exception to the rule that payloads carry metadata and
+# never form content. It is contact detail for a lead, held before the
+# applicant has authorized anything -- the authorization block is on page 3 --
+# so it is the one place in the trail that needs to be covered by a privacy
+# policy and a retention decision. Nothing else from the form is taken: no
+# SSN, no EIN, no bank detail, no signature.
+PUBLIC_IDENTITY_FIELDS = {
+    "name": 120, "business": 200, "email": 254, "mobile": 40, "amount": 24,
+}
 
 # Beacon writes allowed per visit. A real wizard run produces a handful; past
 # this it is a redirect loop or someone poking the endpoint by hand.
@@ -2334,6 +2350,18 @@ def api_activity():
     if 1 <= step <= 20:
         payload["step"] = step
 
+    if event_type == "form_identity_captured":
+        # Named fields with hard caps, never a passthrough of whatever the
+        # browser sent: this endpoint is unauthenticated, and the difference
+        # between the two is whether a stranger can write arbitrary content
+        # into the trail.
+        for field, cap in PUBLIC_IDENTITY_FIELDS.items():
+            value = (request.form.get(field) or "").strip()
+            if value:
+                payload[field] = value[:cap]
+        if not any(k in payload for k in PUBLIC_IDENTITY_FIELDS):
+            return "", 204
+
     log_event(event_type, visit_id=visit_id, payload=payload,
               application_id=session.get(SESSION_VISIT_APP_KEY))
     return "", 204
@@ -3410,10 +3438,34 @@ def api_brands_deactivate(slug: str):
 # answers the question it cannot: what happened to everyone who opened a rep
 # link and never became a lead at all. Those visits carry a visit_id and no
 # application_id, so they appear nowhere else in the admin UI.
+# Roughly half of all form opens are crawlers -- 24 in the first day were
+# Facebook fetching a link preview. They never run the step beacons, so every
+# one lands in the "left on page 1" column and drags the funnel down with it.
+# They are marked rather than dropped: the dashboard hides them by default and
+# says how many it hid, because "your link is being shared on Facebook" is
+# itself worth knowing.
+_AUTOMATED_UA = re.compile(
+    r"bot|crawl|spider|slurp|headless|python-|curl/|wget|facebookexternalhit|"
+    r"semrush|ahrefs|barkrowler|seranking|monitor|uptime|scan|preview|fetch|"
+    # Non-browser HTTP clients: test harnesses, SDKs and API tools. None of
+    # them is a person filling in a form.
+    r"werkzeug|okhttp|java/|go-http|node-fetch|axios|postman|insomnia|libwww",
+    re.I)
+
+
+def _looks_automated(user_agent: Optional[str], ip: Optional[str] = None) -> bool:
+    # Loopback behind ProxyFix means the request came from the box itself --
+    # a health check, a smoke test, something local. Never an applicant.
+    if (ip or "") in ("127.0.0.1", "::1"):
+        return True
+    ua = (user_agent or "").strip()
+    return not ua or bool(_AUTOMATED_UA.search(ua))
+
+
 ACTIVITY_WINDOWS = (1, 7, 30, 90)      # days; anything else snaps to 7
 ACTIVITY_MAX_EVENTS = 20000            # ceiling on one page load
 ACTIVITY_FEED_LIMIT = 60               # recent events shown raw
-ACTIVITY_VISIT_LIMIT = 100             # recent visits listed
+ACTIVITY_VISIT_LIMIT = 300             # recent visits listed
 
 
 def _visit_rows(days: int) -> tuple[list, list, bool]:
@@ -3438,8 +3490,25 @@ def _visit_rows(days: int) -> tuple[list, list, bool]:
     return rows, rows[:ACTIVITY_FEED_LIMIT], len(rows) >= ACTIVITY_MAX_EVENTS
 
 
-def _summarize_visits(rows: list) -> dict:
-    """Fold raw events into one record per visit, then per rep link."""
+def _visit_seconds(opened_at: str, last_at: str) -> Optional[int]:
+    """How long the visit lasted, for spotting a nine-minute abandonment
+    against a three-second bounce."""
+    try:
+        a = datetime.fromisoformat((opened_at or "").replace("Z", "+00:00"))
+        b = datetime.fromisoformat((last_at or "").replace("Z", "+00:00"))
+        return max(0, int((b - a).total_seconds()))
+    except Exception:
+        return None
+
+
+def _summarize_visits(rows: list, include_automated: bool = False) -> dict:
+    """Fold raw events into one record per visit, then per rep link.
+
+    Crawlers are excluded from every figure by default and counted separately.
+    Filtering them in the browser instead would leave the tiles disagreeing
+    with the table as soon as the visit list is capped, and a funnel that
+    counts Facebook's link-preview fetcher as a lead is simply wrong.
+    """
     visits: dict = {}
     for r in reversed(rows):                       # oldest first, so first-seen wins
         if r.get("actor") != "applicant":
@@ -3452,7 +3521,8 @@ def _summarize_visits(rows: list) -> dict:
             "rep_code": None, "brand_slug": None, "furthest_step": 1,
             "submitted": False, "application_id": None, "abandoned": False,
             "rep_resolved": None, "ip": None, "user_agent": None, "events": 0,
-            "step_views": 0,
+            "step_views": 0, "doc_files": 0, "doc_types": [], "idiq": None,
+            "credit_setup_opens": 0, "automated": False, "identity": None,
         })
         v["events"] += 1
         if r["event_type"] == "form_step_viewed":
@@ -3472,6 +3542,12 @@ def _summarize_visits(rows: list) -> dict:
         step = payload.get("step")
         if isinstance(step, int):
             v["furthest_step"] = max(v["furthest_step"], step)
+        if r["event_type"] == "form_identity_captured":
+            # Latest capture wins: they may have gone back, fixed a typo in
+            # the email and come forward again.
+            captured = {k: payload[k] for k in PUBLIC_IDENTITY_FIELDS if payload.get(k)}
+            if captured:
+                v["identity"] = captured
         if r["event_type"] == "form_abandoned":
             v["abandoned"] = True
         if r["event_type"] == "application_submitted":
@@ -3481,6 +3557,48 @@ def _summarize_visits(rows: list) -> dict:
     # Only visits that actually started at the form. A visit first seen
     # mid-journey (an old session beaconing after a deploy) has no open to count.
     seen = [v for v in visits.values() if v["opened_at"]]
+    for v in seen:
+        v["automated"] = _looks_automated(v["user_agent"], v["ip"])
+        # What actually happened, in one word the dashboard can filter on.
+        if v["submitted"]:
+            v["outcome"] = "completed"
+        elif v["furthest_step"] >= 2:
+            v["outcome"] = "half_filled"
+        else:
+            v["outcome"] = "left_page_1"
+        v["seconds"] = _visit_seconds(v["opened_at"], v["last_at"])
+
+    # Everything after the submit -- uploads, the credit-setup link, IDIQ --
+    # happens in a later session opened from an email, which has no visit of
+    # its own and carries only an application id. Folded on by application, or
+    # it would show up nowhere at all.
+    by_app: dict = {}
+    for r in rows:
+        if r.get("actor") != "applicant":
+            continue
+        aid = r.get("application_id")
+        if not aid:
+            continue
+        payload = r.get("payload") or {}
+        a = by_app.setdefault(aid, {"doc_files": 0, "doc_types": [],
+                                    "idiq": None, "credit_setup_opens": 0})
+        if r["event_type"] == "documents_uploaded":
+            a["doc_files"] += payload.get("files") or 0
+            for dt in payload.get("types") or []:
+                if dt not in a["doc_types"]:
+                    a["doc_types"].append(dt)
+        elif r["event_type"] == "idiq_credentials_saved":
+            a["idiq"] = "saved"
+        elif r["event_type"] == "idiq_credentials_skipped" and not a["idiq"]:
+            a["idiq"] = "skipped"
+        elif r["event_type"] in ("credit_setup_viewed", "resume_link_opened"):
+            a["credit_setup_opens"] += 1
+    for v in seen:
+        v.update(by_app.get(v.get("application_id"), {}))
+
+    automated_count = sum(1 for v in seen if v["automated"])
+    if not include_automated:
+        seen = [v for v in seen if not v["automated"]]
 
     by_rep: dict = {}
     for v in seen:
@@ -3504,8 +3622,11 @@ def _summarize_visits(rows: list) -> dict:
                 g["left_after_details"] += 1
             else:
                 g["bounced"] += 1
-        if v["rep_resolved"] is False:
-            g["unresolved"] += 1              # code was present and did not resolve
+        if v["rep_code"] and v["rep_resolved"] is False:
+            # Guarded on rep_code as well as the flag: events written before
+            # the flag was made conditional still carry rep_resolved=false on
+            # visits that never had a code, and a "direct" link cannot drop one.
+            g["unresolved"] += 1
 
     for g in by_rep.values():
         opens = g["opens"] or 1
@@ -3530,16 +3651,50 @@ def _summarize_visits(rows: list) -> dict:
             "submitted": submitted,
             "dropped": len(seen) - submitted,
             "left_after_details": left_after,
+            "half_filled_identified": sum(
+                1 for v in seen
+                if not v["submitted"] and v["furthest_step"] >= 2 and v.get("identity")),
             "bounced": len(seen) - submitted - left_after,
             "started": submitted + left_after,
             "step_views": sum(v["step_views"] for v in seen),
             "conversion": round(100.0 * submitted / len(seen), 1) if seen else 0.0,
-            "unresolved": sum(1 for v in seen if v["rep_resolved"] is False),
+            "unresolved": sum(1 for v in seen
+                          if v["rep_code"] and v["rep_resolved"] is False),
         },
         "by_rep": sorted(by_rep.values(), key=lambda g: (-g["opens"], g["rep_code"] or "")),
         "daily": [daily[k] for k in sorted(daily)],
         "visits": sorted(seen, key=lambda v: v["opened_at"], reverse=True)[:ACTIVITY_VISIT_LIMIT],
+        "automated_excluded": 0 if include_automated else automated_count,
+        "automated_seen": automated_count,
     }
+
+
+def _attach_application_detail(visits: list) -> None:
+    """Fill in business name, amount and IDIQ state for visits that submitted."""
+    ids = sorted({v["application_id"] for v in visits if v.get("application_id")})
+    if not ids:
+        return
+    try:
+        res = sb.table("applications").select(
+            "id, business_legal_name, loan_amount, idiq_username"
+        ).in_("id", ids).execute()
+        by_id = {row["id"]: row for row in (res.data or [])}
+    except Exception as exc:
+        log.warning("Could not attach application detail to visits: %s", exc)
+        return
+    for v in visits:
+        row = by_id.get(v.get("application_id"))
+        if not row:
+            continue
+        v["business_name"] = row.get("business_legal_name")
+        try:
+            v["loan_amount"] = float(row["loan_amount"]) if row.get("loan_amount") is not None else None
+        except (TypeError, ValueError):
+            v["loan_amount"] = None
+        # The row is the authority on credentials; the event only says one was
+        # submitted at some point, and a later edit would not re-fire it.
+        if row.get("idiq_username"):
+            v["idiq"] = "saved"
 
 
 @app.route("/api/activity/summary")
@@ -3563,7 +3718,12 @@ def api_activity_summary():
         return jsonify({"available": False,
                         "reason": "Could not read the activity trail."}), 200
 
-    out = _summarize_visits(rows)
+    include_automated = request.args.get("bots") == "1"
+    out = _summarize_visits(rows, include_automated=include_automated)
+    # A completed visit is only useful if you can see whose it is. Abandoned
+    # visits stay anonymous by design -- nothing typed into the form reaches
+    # the server until submit -- so the name column is blank for them.
+    _attach_application_detail(out["visits"])
     # Every rep, not only those with traffic in the window. A link nobody
     # opened all week is the finding you most want to see, and it can only be
     # seen if it is selectable -- filtering to it and getting zeros is the
@@ -3575,6 +3735,7 @@ def api_activity_summary():
     out.update({
         "available": True,
         "window_days": days,
+        "include_automated": include_automated,
         "truncated": truncated,
         "event_count": len(rows),
         "feed": feed,

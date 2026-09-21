@@ -83,6 +83,9 @@
     .pill.no i { background:#94a3b8; }
     .pill.bad  { color:#fca5a5; background:rgba(248,113,113,.1); border-color:rgba(248,113,113,.3); }
     .pill.bad i{ background:#f87171; }
+    .pill.warn { color:#fcd34d; background:rgba(251,191,36,.1); border-color:rgba(251,191,36,.32); }
+    .pill.warn i{ background:#fbbf24; }
+    .bot-row td { opacity:.55; }
 
     td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
     .bar-mini { display:inline-block; height:6px; border-radius:3px; background:#60a5fa; vertical-align:1px; min-width:2px; }
@@ -137,6 +140,7 @@
             <button data-days="90">90d</button>
           </div>
           <select class="sel" id="repFilter"><option value="">All rep links</option></select>
+          <label class="toggle"><input type="checkbox" id="showBots" /> Include bots</label>
           <label class="toggle"><input type="checkbox" id="autoRefresh" checked /> Auto-refresh</label>
           <button class="btn ghost" id="refreshBtn">Refresh</button>
         </div>
@@ -158,7 +162,15 @@
     </div>
 
     <div class="card">
-      <div class="card-header"><h2>Recent visits</h2></div>
+      <div class="card-header">
+        <h2>Recent visits</h2>
+        <div class="seg" id="outcomeSeg">
+          <button data-outcome="" class="on">All</button>
+          <button data-outcome="completed">Completed</button>
+          <button data-outcome="half_filled">Half-filled</button>
+          <button data-outcome="left_page_1">Left on page 1</button>
+        </div>
+      </div>
       <div class="card-body"><div class="table-wrap" id="visitTable"></div></div>
     </div>
 
@@ -201,6 +213,7 @@
 
   const EVENT_LABELS = {
     form_viewed:'Opened the form', form_step_viewed:'Reached a step',
+    form_identity_captured:'Contact details entered',
     form_abandoned:'Left without submitting', submission_rejected:'Submit blocked by validation',
     application_submitted:'Submitted the application', documents_uploaded:'Uploaded documents',
     thank_you_viewed:'Viewed thank-you page', resume_link_sent:'Credit-setup link sent',
@@ -215,7 +228,7 @@
   // Sentinel: '' already means "all links", so direct traffic needs its own
   // value rather than the empty rep_code it actually carries.
   const DIRECT = '__direct__';
-  let state = { days:7, rep:'', data:null };
+  let state = { days:7, rep:'', outcome:'', bots:false, data:null };
   let timer = null;
 
   // ── Chart ────────────────────────────────────────────────────────────────
@@ -401,7 +414,10 @@
     const tiles = [
       ['Form opens', t.opens, `${t.step_views || 0} step views inside the form`],
       ['Completed', t.submitted, 'submitted an application'],
-      ['Left after details', t.left_after_details, 'got past page 1, never finished'],
+      ['Left after details', t.left_after_details,
+       t.half_filled_identified
+         ? `${t.half_filled_identified} with contact details`
+         : 'got past page 1, never finished'],
       ['Left on first page', t.bounced, 'opened and went no further'],
       ['Conversion', Number(t.conversion).toFixed(1) + '%', 'of opens that completed'],
     ];
@@ -455,29 +471,81 @@
         <strong>No opens this window:</strong> ${idle.map(esc).join(', ')}</p>` : ''}`;
   }
 
+  function fmtMoney(x) {
+    const n = Number(x);
+    if (!isFinite(n)) return '';
+    return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  }
+
+  function fmtDuration(sec) {
+    if (sec == null) return '—';
+    if (sec < 60) return sec + 's';
+    const m = Math.floor(sec / 60), r = sec % 60;
+    return r ? `${m}m ${r}s` : `${m}m`;
+  }
+
+  const OUTCOME_PILL = {
+    completed:   ['ok',  'completed'],
+    half_filled: ['warn','half-filled'],
+    left_page_1: ['no',  'left on page 1'],
+  };
+
   function renderVisits(rows) {
     const el = document.getElementById('visitTable');
-    if (!rows.length) { el.innerHTML = '<p class="empty">No visits in this window.</p>'; return; }
+    if (state.outcome) rows = rows.filter(v => v.outcome === state.outcome);
+    if (!rows.length) { el.innerHTML = '<p class="empty">Nothing matches this filter.</p>'; return; }
     el.innerHTML = `
       <table class="table">
         <thead><tr>
-          <th>Opened</th><th>Rep link</th><th>Brand</th>
-          <th class="num">Furthest step</th><th>Outcome</th><th>Application</th>
+          <th>Opened</th><th>Application</th><th>Rep link</th>
+          <th class="num">Reached</th><th>Outcome</th>
+          <th>Documents</th><th>IDIQ</th><th class="num">Credit link</th>
+          <th class="num">Time on form</th>
         </tr></thead>
-        <tbody>${rows.map(v => `
-          <tr>
-            <td>${esc(fmtTime(v.opened_at))}</td>
+        <tbody>${rows.map(v => {
+          const [cls, word] = OUTCOME_PILL[v.outcome] || ['no', v.outcome || '—'];
+          // Only a completed visit has a name: nothing typed into the form
+          // reaches the server until submit, so an abandoned visit is
+          // genuinely anonymous and the column says so rather than sitting
+          // blank as though it were a loading failure.
+          // Three states, not two. A submitted visit is named by its
+          // application; one that got past page 1 is named by what page 1
+          // required; one that never got that far genuinely cannot be named.
+          const id = v.identity || null;
+          const who = v.application_id
+            ? `<a class="nav-link" style="padding:2px 8px" href="/admin#${v.application_id}">#${v.application_id}</a>`
+              + (v.business_name ? ` ${esc(v.business_name)}` : '')
+              + (v.loan_amount ? ` <span class="mono">${fmtMoney(v.loan_amount)}</span>` : '')
+            : id
+            ? `<div><strong>${esc(id.name || '—')}</strong>${id.business ? ' · ' + esc(id.business) : ''}</div>`
+              + `<div class="mono">`
+              + (id.email ? `<a href="mailto:${esc(id.email)}">${esc(id.email)}</a>` : '')
+              + (id.mobile ? `${id.email ? ' · ' : ''}<a href="tel:${esc(id.mobile.replace(/[^0-9+]/g,''))}">${esc(id.mobile)}</a>` : '')
+              + (id.amount ? ` · ${esc(fmtMoney(id.amount))}` : '')
+              + `</div>`
+            : '<span class="mono" title="they left before page 1 was completed, so nothing was captured">not identified</span>';
+          const idiq = v.idiq === 'saved'   ? '<span class="pill ok"><i></i>saved</span>'
+                     : v.idiq === 'skipped' ? '<span class="pill warn"><i></i>skipped</span>'
+                     : '<span class="mono">—</span>';
+          const docs = v.doc_files
+            ? `${v.doc_files} <span class="mono">${esc((v.doc_types || []).join(', '))}</span>`
+            : '<span class="mono">—</span>';
+          return `
+          <tr${v.automated ? ' class="bot-row"' : ''}>
+            <td>${esc(fmtTime(v.opened_at))}${v.automated ? ' <span class="pill no"><i></i>bot</span>' : ''}</td>
+            <td>${who}</td>
             <td>${v.rep_code
                   ? esc(v.rep_code) + (v.rep_resolved === false
                       ? ' <span class="pill bad" title="code no longer resolves — recorded as Direct"><i></i>not credited</span>' : '')
                   : '<span class="mono">direct</span>'}</td>
-            <td class="mono">${esc(v.brand_slug || '—')}</td>
-            <td class="num">${v.furthest_step}</td>
-            <td>${v.submitted
-                  ? '<span class="pill ok"><i></i>completed</span>'
-                  : '<span class="pill no"><i></i>not completed</span>'}</td>
-            <td>${v.application_id ? `<a class="nav-link" style="padding:3px 9px" href="/admin#${v.application_id}">#${v.application_id}</a>` : '<span class="mono">—</span>'}</td>
-          </tr>`).join('')}
+            <td class="num">step ${v.furthest_step}</td>
+            <td><span class="pill ${cls}"><i></i>${word}</span></td>
+            <td>${docs}</td>
+            <td>${idiq}</td>
+            <td class="num">${v.credit_setup_opens || '<span class="mono">—</span>'}</td>
+            <td class="num">${fmtDuration(v.seconds)}</td>
+          </tr>`;
+        }).join('')}
         </tbody>
       </table>`;
   }
@@ -552,25 +620,41 @@
       + codes.map(c => `<option value="${esc(c)}"${c===state.rep?' selected':''}>${esc(c)}</option>`).join('');
 
     const d = applyRepFilter(raw);
-    renderTiles(d.totals);
-    renderChart(d.daily);
-    renderFunnel(d.by_rep);
+    // Each section renders independently: a failure in one used to abort the
+    // rest of render(), so a bad row in the visits table silently emptied the
+    // live feed below it with nothing on screen to explain the gap.
+    const section = (id, fn) => {
+      try { fn(); }
+      catch (err) {
+        console.error('activity: ' + id + ' failed', err);
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '<p class="empty">This section could not be rendered — '
+          + esc(err && err.message ? err.message : String(err)) + '</p>';
+      }
+    };
+    section('tiles',       () => renderTiles(d.totals));
+    section('chartBlock',  () => renderChart(d.daily));
+    section('funnelBlock', () => renderFunnel(d.by_rep));
     // Active reps whose links saw no traffic at all in this window.
     const active = (raw.known_reps || []).filter(r => r.active).map(r => r.code);
     const hadOpens = new Set(d.by_rep.map(r => r.rep_code).filter(Boolean));
-    renderRepTable(d.by_rep, d.totals, active.filter(c => !hadOpens.has(c)));
-    renderVisits(d.visits);
-    renderFeed(d.feed);
+    section('repTable',   () => renderRepTable(d.by_rep, d.totals, active.filter(c => !hadOpens.has(c))));
+    section('visitTable', () => renderVisits(d.visits));
+    section('feed',       () => renderFeed(d.feed));
+    const hidden = raw.automated_excluded
+      ? ` · ${raw.automated_excluded} automated ${raw.automated_excluded === 1 ? 'visit' : 'visits'} hidden`
+      : '';
     document.getElementById('stamp').textContent =
-      `${d.totals.opens} opens · ${raw.event_count} events in the last ${raw.window_days}d · updated ${fmtClock(raw.generated_at)} ET`;
+      `${d.totals.opens} opens · ${raw.event_count} events in the last ${raw.window_days}d${hidden}`
+      + ` · updated ${fmtClock(raw.generated_at)} ET`;
   }
 
   async function load() {
     try {
       // no-store so a poll never reads its own previous answer out of the
       // browser cache -- stale numbers here look identical to no traffic.
-      const res = await fetch('/api/activity/summary?days=' + state.days,
-                              { cache: 'no-store' });
+      const res = await fetch(`/api/activity/summary?days=${state.days}`
+                              + (state.bots ? '&bots=1' : ''), { cache: 'no-store' });
       if (res.status === 401) { window.location.href = '/login?next=/admin/activity'; return; }
       state.data = await res.json();
     } catch (e) {
@@ -586,6 +670,15 @@
     load();
   });
   document.getElementById('repFilter').addEventListener('change', e => { state.rep = e.target.value; render(); });
+  document.getElementById('outcomeSeg').addEventListener('click', e => {
+    const b = e.target.closest('button[data-outcome]'); if (!b) return;
+    document.querySelectorAll('#outcomeSeg button').forEach(x => x.classList.toggle('on', x === b));
+    state.outcome = b.dataset.outcome;
+    render();
+  });
+  document.getElementById('showBots').addEventListener('change', e => {
+    state.bots = e.target.checked; load();
+  });
   document.getElementById('refreshBtn').addEventListener('click', load);
   document.getElementById('autoRefresh').addEventListener('change', e => schedule(e.target.checked));
 
