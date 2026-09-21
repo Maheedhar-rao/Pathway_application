@@ -133,8 +133,9 @@ SAM_GOV_API_KEY = os.environ.get("SAM_GOV_API_KEY", "")
 # Main team email - receives ALL submissions
 TEAM_EMAIL = os.environ.get("TEAM_EMAIL", "team@pathwaycatalyst.com")
 
-# Copied on the rep lead-summary email alongside the referring rep. Blank
-# disables that recipient rather than sending to a placeholder address.
+# Internal inboxes that receive the full application package alongside
+# TEAM_EMAIL. Blank disables that recipient rather than sending to a
+# placeholder address.
 SUPPORT_EMAIL = os.environ.get("SUPPORT_EMAIL", "").strip()
 PROCESSING_EMAIL = os.environ.get("PROCESSING_EMAIL", "").strip()
 
@@ -1135,7 +1136,8 @@ def _build_email_content(business_name, submission_id, rep_name, attached_files,
         attachments_text = ""
         body_note = (
             "A new application just came in on your link. The key lead details are "
-            "listed above; the full application PDF is in the separate notification email."
+            "listed above. The full application and any supporting documents go "
+            "to the processing team."
         )
     elif is_applicant_copy:
         # Customer-facing receipt — friendlier copy, no internal rep details.
@@ -1651,6 +1653,22 @@ def _format_time_in_business(start_date: str) -> str:
     return " ".join(parts)
 
 
+def _internal_recipients() -> List[str]:
+    """The internal inboxes that receive the full application package.
+
+    Reps are deliberately excluded. A rep only ever receives the lead summary
+    (_build_lead_details), which carries no SSN, date of birth or EIN -- the
+    application PDF and the applicant's uploaded documents stay internal.
+    Blank env vars are skipped so an unconfigured inbox is simply absent.
+    """
+    out = []
+    for addr in (TEAM_EMAIL, SUPPORT_EMAIL, PROCESSING_EMAIL):
+        addr = (addr or "").strip()
+        if addr and "@" in addr and addr not in out:
+            out.append(addr)
+    return out
+
+
 def _build_lead_details(form: dict) -> List[tuple]:
     """The lead facts the rep email carries, as ordered (label, value) pairs."""
     loan_amt = form.get("loan_amount", "")
@@ -1672,13 +1690,13 @@ def _build_lead_details(form: dict) -> List[tuple]:
 
 
 def _queue_lead_summary_email(form: dict, submission_id: int, rep_info: Optional[dict]):
-    """Fire the plain lead-summary email to the rep, support and processing.
+    """Fire the plain lead-summary email to the rep and the internal inboxes.
 
     Sent in the background alongside the PDF notification and never allowed to
     fail the submission. Recipients with no configured address are skipped.
     """
     recipients = []
-    for addr in ((rep_info or {}).get("email"), SUPPORT_EMAIL, PROCESSING_EMAIL):
+    for addr in ((rep_info or {}).get("email"), *_internal_recipients()):
         addr = (addr or "").strip()
         if addr and "@" in addr and addr not in recipients:
             recipients.append(addr)
@@ -2168,7 +2186,8 @@ def submit_application():
                        "path": "wizard",
                        **({"rep_resolved": bool(rep_info)} if rep_code else {})})
 
-    # Lead summary to rep/support/processing — independent of the PDF pipeline.
+    # Lead summary to the rep and the internal inboxes — independent of the
+    # PDF pipeline, and the only application email a rep receives.
     _queue_lead_summary_email(form, submission_id, rep_info)
 
     if PDF_ENABLED:
@@ -2179,9 +2198,7 @@ def submit_application():
             if pdf_buffer:
                 pdf_buffer.seek(0)
                 pdf_bytes = pdf_buffer.read()
-                recipients = [TEAM_EMAIL]
-                if rep_info and rep_info["email"]:
-                    recipients.append(rep_info["email"])
+                recipients = _internal_recipients()
 
                 def _bg_send_team(recips, biz, sid, rname):
                     try:
@@ -2246,16 +2263,13 @@ def upload_documents(sid):
     if saved_paths:
         try:
             app_res = sb.table("applications").select(
-                "business_legal_name, rep_name, rep_email"
+                "business_legal_name, rep_name"
             ).eq("id", sid).execute()
             row = (app_res.data or [{}])[0]
             business_name = row.get("business_legal_name") or ""
             rep_name = row.get("rep_name")
-            rep_email = row.get("rep_email")
 
-            recipients = [TEAM_EMAIL]
-            if rep_email:
-                recipients.append(rep_email)
+            recipients = _internal_recipients()
 
             def _bg_send_docs(recips, biz, sid_, rname, files):
                 try:
@@ -2444,7 +2458,8 @@ def submit():
                        "path": "legacy",
                        **({"rep_resolved": bool(rep_info)} if rep_code else {})})
 
-    # Lead summary to rep/support/processing — independent of the PDF pipeline.
+    # Lead summary to the rep and the internal inboxes — independent of the
+    # PDF pipeline, and the only application email a rep receives.
     _queue_lead_summary_email(form, submission_id, rep_info)
 
     # Process inline file uploads (bank statements / voided check / ID).
@@ -2457,7 +2472,8 @@ def submit():
                   payload={"types": _saved_types, "files": len(saved_paths),
                            "failed": len(_failed)})
 
-    # Generate PDF and email to team + rep + applicant (background so user doesn't wait)
+    # Generate PDF and email it internally + to the applicant (background so
+    # the user doesn't wait). Reps are not on this send.
     if PDF_ENABLED:
         try:
             rep_name = rep_info["name"] if rep_info else None
@@ -2471,9 +2487,7 @@ def submit():
                 pdf_buffer.seek(0)
                 pdf_bytes = pdf_buffer.read()
 
-                recipients = [TEAM_EMAIL]
-                if rep_info and rep_info["email"]:
-                    recipients.append(rep_info["email"])
+                recipients = _internal_recipients()
 
                 def _bg_send_team(recips, biz, sid, rname, files):
                     try:
@@ -2792,20 +2806,17 @@ def upload_docs():
                   payload={"types": saved, "files": len(attached_paths),
                            "failed": len(failed)})
 
-    # Email uploaded documents to team + rep (in background)
+    # Email uploaded documents to the internal inboxes (in background)
     if attached_paths:
         try:
             app_res = sb.table("applications").select(
-                "business_legal_name, rep_name, rep_email"
+                "business_legal_name, rep_name"
             ).eq("id", sid).execute()
             row = (app_res.data or [{}])[0]
             business_name = row.get("business_legal_name") or ""
             rep_name = row.get("rep_name")
-            rep_email = row.get("rep_email")
 
-            recipients = [TEAM_EMAIL]
-            if rep_email:
-                recipients.append(rep_email)
+            recipients = _internal_recipients()
 
             def _bg_send_docs(recips, biz, sid_, rname, files):
                 try:
