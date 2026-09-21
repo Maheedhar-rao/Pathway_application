@@ -467,7 +467,23 @@ SESSION_VISIT_APP_KEY = "visit_app_id"
 # Event types the unauthenticated beacon (/api/activity) is allowed to write.
 # Anything else is dropped: the browser may only add to the trail in ways we
 # already expect, never forge an "application_submitted" that makes it lie.
-PUBLIC_EVENT_TYPES = {"form_step_viewed", "form_abandoned"}
+PUBLIC_EVENT_TYPES = {"form_step_viewed", "form_abandoned", "form_identity_captured"}
+
+# Page 1 asks for these five and requires every one of them, so a visit that
+# reaches page 2 has them filled and browser-validated. Captured there and
+# nowhere else: it is the earliest point at which an abandoned application can
+# be followed up, and the only alternative is a half-filled lead nobody can
+# contact.
+#
+# This is a deliberate exception to the rule that payloads carry metadata and
+# never form content. It is contact detail for a lead, held before the
+# applicant has authorized anything -- the authorization block is on page 3 --
+# so it is the one place in the trail that needs to be covered by a privacy
+# policy and a retention decision. Nothing else from the form is taken: no
+# SSN, no EIN, no bank detail, no signature.
+PUBLIC_IDENTITY_FIELDS = {
+    "name": 120, "business": 200, "email": 254, "mobile": 40, "amount": 24,
+}
 
 # Beacon writes allowed per visit. A real wizard run produces a handful; past
 # this it is a redirect loop or someone poking the endpoint by hand.
@@ -2320,6 +2336,18 @@ def api_activity():
     if 1 <= step <= 20:
         payload["step"] = step
 
+    if event_type == "form_identity_captured":
+        # Named fields with hard caps, never a passthrough of whatever the
+        # browser sent: this endpoint is unauthenticated, and the difference
+        # between the two is whether a stranger can write arbitrary content
+        # into the trail.
+        for field, cap in PUBLIC_IDENTITY_FIELDS.items():
+            value = (request.form.get(field) or "").strip()
+            if value:
+                payload[field] = value[:cap]
+        if not any(k in payload for k in PUBLIC_IDENTITY_FIELDS):
+            return "", 204
+
     log_event(event_type, visit_id=visit_id, payload=payload,
               application_id=session.get(SESSION_VISIT_APP_KEY))
     return "", 204
@@ -3483,7 +3511,7 @@ def _summarize_visits(rows: list, include_automated: bool = False) -> dict:
             "submitted": False, "application_id": None, "abandoned": False,
             "rep_resolved": None, "ip": None, "user_agent": None, "events": 0,
             "step_views": 0, "doc_files": 0, "doc_types": [], "idiq": None,
-            "credit_setup_opens": 0, "automated": False,
+            "credit_setup_opens": 0, "automated": False, "identity": None,
         })
         v["events"] += 1
         if r["event_type"] == "form_step_viewed":
@@ -3503,6 +3531,12 @@ def _summarize_visits(rows: list, include_automated: bool = False) -> dict:
         step = payload.get("step")
         if isinstance(step, int):
             v["furthest_step"] = max(v["furthest_step"], step)
+        if r["event_type"] == "form_identity_captured":
+            # Latest capture wins: they may have gone back, fixed a typo in
+            # the email and come forward again.
+            captured = {k: payload[k] for k in PUBLIC_IDENTITY_FIELDS if payload.get(k)}
+            if captured:
+                v["identity"] = captured
         if r["event_type"] == "form_abandoned":
             v["abandoned"] = True
         if r["event_type"] == "application_submitted":
@@ -3606,6 +3640,9 @@ def _summarize_visits(rows: list, include_automated: bool = False) -> dict:
             "submitted": submitted,
             "dropped": len(seen) - submitted,
             "left_after_details": left_after,
+            "half_filled_identified": sum(
+                1 for v in seen
+                if not v["submitted"] and v["furthest_step"] >= 2 and v.get("identity")),
             "bounced": len(seen) - submitted - left_after,
             "started": submitted + left_after,
             "step_views": sum(v["step_views"] for v in seen),

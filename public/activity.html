@@ -213,6 +213,7 @@
 
   const EVENT_LABELS = {
     form_viewed:'Opened the form', form_step_viewed:'Reached a step',
+    form_identity_captured:'Contact details entered',
     form_abandoned:'Left without submitting', submission_rejected:'Submit blocked by validation',
     application_submitted:'Submitted the application', documents_uploaded:'Uploaded documents',
     thank_you_viewed:'Viewed thank-you page', resume_link_sent:'Credit-setup link sent',
@@ -413,7 +414,10 @@
     const tiles = [
       ['Form opens', t.opens, `${t.step_views || 0} step views inside the form`],
       ['Completed', t.submitted, 'submitted an application'],
-      ['Left after details', t.left_after_details, 'got past page 1, never finished'],
+      ['Left after details', t.left_after_details,
+       t.half_filled_identified
+         ? `${t.half_filled_identified} with contact details`
+         : 'got past page 1, never finished'],
       ['Left on first page', t.bounced, 'opened and went no further'],
       ['Conversion', Number(t.conversion).toFixed(1) + '%', 'of opens that completed'],
     ];
@@ -504,11 +508,22 @@
           // reaches the server until submit, so an abandoned visit is
           // genuinely anonymous and the column says so rather than sitting
           // blank as though it were a loading failure.
+          // Three states, not two. A submitted visit is named by its
+          // application; one that got past page 1 is named by what page 1
+          // required; one that never got that far genuinely cannot be named.
+          const id = v.identity || null;
           const who = v.application_id
             ? `<a class="nav-link" style="padding:2px 8px" href="/admin#${v.application_id}">#${v.application_id}</a>`
               + (v.business_name ? ` ${esc(v.business_name)}` : '')
               + (v.loan_amount ? ` <span class="mono">${fmtMoney(v.loan_amount)}</span>` : '')
-            : '<span class="mono" title="nothing is stored until the form is submitted">not identified</span>';
+            : id
+            ? `<div><strong>${esc(id.name || '—')}</strong>${id.business ? ' · ' + esc(id.business) : ''}</div>`
+              + `<div class="mono">`
+              + (id.email ? `<a href="mailto:${esc(id.email)}">${esc(id.email)}</a>` : '')
+              + (id.mobile ? `${id.email ? ' · ' : ''}<a href="tel:${esc(id.mobile.replace(/[^0-9+]/g,''))}">${esc(id.mobile)}</a>` : '')
+              + (id.amount ? ` · ${esc(fmtMoney(id.amount))}` : '')
+              + `</div>`
+            : '<span class="mono" title="they left before page 1 was completed, so nothing was captured">not identified</span>';
           const idiq = v.idiq === 'saved'   ? '<span class="pill ok"><i></i>saved</span>'
                      : v.idiq === 'skipped' ? '<span class="pill warn"><i></i>skipped</span>'
                      : '<span class="mono">—</span>';
