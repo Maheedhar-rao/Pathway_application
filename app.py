@@ -2015,8 +2015,62 @@ def _process_uploads(sid: int, request_files) -> tuple[List[str], List[str], Lis
 
 
 # -------------------- Public Pages --------------------
+
+# ---- Recovering a mangled rep link -------------------------------------------
+# Rep links are pasted into chat apps, emails and link-in-bio pages we do not
+# control, and they come back damaged in two ways we have actually observed in
+# production:
+#
+#   ?rep=tom`                 a link shared inside backticks, where the chat
+#                             app's URL parser swallowed the closing one
+#   ?rep=juliette/favicon.ico a link-preview service fetching the icon by
+#                             gluing "/favicon.ico" onto the whole URL rather
+#                             than resolving it against the origin
+#
+# Both used to resolve to nobody, so a merchant clicking the shared link landed
+# as Direct and the rep lost the credit silently. The damage is always at the
+# edges -- a suffix, or punctuation the parser picked up -- so trimming it back
+# recovers the real code. Only the edges: interior characters are left alone,
+# because turning one rep's code into another's would be worse than dropping it.
+_REP_TRIM = re.compile(r"^[^a-z0-9]+|[^a-z0-9]+$")
+
+# Path suffixes a preview fetcher appends. Recorded rather than just stripped:
+# a request for an icon is not a person opening the form.
+_ASSET_SUFFIX = re.compile(
+    r"^(favicon\.ico|apple-touch-icon[^/]*\.png|robots\.txt|sitemap\.xml)$", re.I)
+
+
+def read_rep_param() -> tuple[str, dict]:
+    """Rep code off the inbound URL, repaired if it arrived damaged.
+
+    Returns the code and a dict of notes for the activity trail, so how often
+    links arrive mangled is visible rather than merely worked around.
+    """
+    raw = (request.args.get("rep") or "").strip()
+    if not raw:
+        return "", {}
+
+    notes: dict = {}
+    code = raw.lower()
+
+    # A slash means something was appended: keep the first segment and say what
+    # the rest looked like.
+    if "/" in code:
+        code, _, tail = code.partition("/")
+        notes["asset_fetch"] = bool(_ASSET_SUFFIX.match(tail.split("?")[0]))
+
+    code = _REP_TRIM.sub("", code)
+    if code != raw:
+        notes["rep_param_repaired"] = raw[:80]
+    if code and not _REP_CODE_RE.match(code):
+        # Still not a shape we ever issue -- somebody typed into the URL bar.
+        notes["rep_param_invalid"] = raw[:80]
+        return "", notes
+    return code, notes
+
+
 def _render_form(client_name=None, brand_slug=None):
-    rep_code = request.args.get("rep", "").strip()
+    rep_code, rep_notes = read_rep_param()
     rep_info = get_rep_info(rep_code)
     rep_sig = sign_rep_code(rep_code) if rep_code else ""
 
@@ -2036,6 +2090,7 @@ def _render_form(client_name=None, brand_slug=None):
         # rep_resolved=false on a plain direct visit made every one of them
         # read as a dropped rep code on the timeline.
         payload["rep_resolved"] = bool(rep_info)
+    payload.update(rep_notes)
     log_event("form_viewed", visit_id=visit_id, rep_code=rep_code,
               brand_slug=brand_slug or "", payload=payload)
 
@@ -2065,6 +2120,23 @@ def home_client(client_slug):
     if not brand:
         abort(404)
     return _render_form(client_name=brand["name"], brand_slug=brand["slug"])
+
+@app.route("/favicon.ico")
+def favicon():
+    """Serve a real icon.
+
+    Without one every browser visit 404s on /favicon.ico, and link-preview
+    services go hunting for it -- one of them by gluing "/favicon.ico" onto
+    the whole rep link, query string included, which is where the
+    "juliette/favicon.ico" rep codes in the trail came from. The route is more
+    specific than /<client_slug>, so it wins the match rather than 404ing
+    through the brand lookup.
+    """
+    # favicon.png, not the 251 KB 576-square logo: this is requested on every
+    # page load and is rendered at 16 or 32 pixels.
+    return send_from_directory(str(APP_DIR / "static"), "favicon.png",
+                               mimetype="image/png", max_age=86400)
+
 
 @app.route("/thank-you")
 def thank_you():
@@ -3453,7 +3525,12 @@ _AUTOMATED_UA = re.compile(
     re.I)
 
 
-def _looks_automated(user_agent: Optional[str], ip: Optional[str] = None) -> bool:
+def _looks_automated(user_agent: Optional[str], ip: Optional[str] = None,
+                     asset_fetch: bool = False) -> bool:
+    # A request whose URL had "/favicon.ico" glued onto it is a preview
+    # service collecting an icon, whatever user agent it claims.
+    if asset_fetch:
+        return True
     # Loopback behind ProxyFix means the request came from the box itself --
     # a health check, a smoke test, something local. Never an applicant.
     if (ip or "") in ("127.0.0.1", "::1"):
@@ -3539,6 +3616,8 @@ def _summarize_visits(rows: list, include_automated: bool = False) -> dict:
             # Absent on a direct visit -- only a link that carried a code can
             # have dropped one.
             v["rep_resolved"] = payload.get("rep_resolved")
+            v["asset_fetch"] = bool(payload.get("asset_fetch"))
+            v["rep_param_repaired"] = payload.get("rep_param_repaired")
         step = payload.get("step")
         if isinstance(step, int):
             v["furthest_step"] = max(v["furthest_step"], step)
@@ -3558,7 +3637,8 @@ def _summarize_visits(rows: list, include_automated: bool = False) -> dict:
     # mid-journey (an old session beaconing after a deploy) has no open to count.
     seen = [v for v in visits.values() if v["opened_at"]]
     for v in seen:
-        v["automated"] = _looks_automated(v["user_agent"], v["ip"])
+        v["automated"] = _looks_automated(v["user_agent"], v["ip"],
+                                          asset_fetch=bool(v.get("asset_fetch")))
         # What actually happened, in one word the dashboard can filter on.
         if v["submitted"]:
             v["outcome"] = "completed"
