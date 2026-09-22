@@ -49,6 +49,17 @@
       font-size: 12px;
       font-style: italic;
     }
+    /* State, never colour alone: each carries its own words, because green
+       against grey is not a distinction everyone can see. */
+    .idiq-yes {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 500;
+      background: rgba(52,211,153,.12); border: 1px solid rgba(52,211,153,.25);
+      color: #34d399; white-space: nowrap;
+    }
+    .idiq-no {
+      color: #94a3b8; font-size: 12px; font-style: italic; white-space: nowrap;
+    }
     .search {
       background: rgba(15,23,42,.55);
       border: 1px solid rgba(148,163,184,.2);
@@ -158,6 +169,11 @@
         <h2>Recent Submissions</h2>
         <div class="inline">
           <input id="searchBox" class="search" type="text" placeholder="Search by business, owner, rep..." />
+          <select id="idiqFilter" class="search" style="width:auto">
+            <option value="">All applications</option>
+            <option value="saved">IDIQ credentials on file</option>
+            <option value="missing">Awaiting IDIQ credentials</option>
+          </select>
           <button id="refreshBtn" class="btn ghost">Refresh</button>
         </div>
       </div>
@@ -173,6 +189,7 @@
                 <th>Loan</th>
                 <th>Owners</th>
                 <th>Rep</th>
+                <th>IDIQ</th>
                 <th></th>
               </tr>
             </thead>
@@ -276,6 +293,8 @@
     const offset = (currentPage - 1) * PAGE_SIZE;
     const params = new URLSearchParams({ limit: PAGE_SIZE, offset });
     if (q) params.set('q', q);
+    const idiq = document.getElementById('idiqFilter').value;
+    if (idiq) params.set('idiq', idiq);
     const res = await fetch('/api/submissions?' + params.toString());
     return await res.json();
   }
@@ -336,6 +355,9 @@
         <td>${fmtMoney(item.loan_amount)}</td>
         <td>${(item.owners || []).map(o => `<span class='chip'>👤 ${o}</span>`).join(' ')}</td>
         <td>${repHtml}</td>
+        <td>${item.idiq_saved
+              ? '<span class="idiq-yes">credentials on file</span>'
+              : '<span class="idiq-no">awaiting</span>'}</td>
         <td><button class="btn primary" onclick="showDetails(${item.id})">View</button></td>
       `;
       tbody.appendChild(tr);
@@ -343,7 +365,7 @@
 
     if (rows.length === 0) {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td colspan="8" style="text-align:center;color:#94a3b8;padding:24px">No submissions found.</td>`;
+      tr.innerHTML = `<td colspan="9" style="text-align:center;color:#94a3b8;padding:24px">No submissions found.</td>`;
       tbody.appendChild(tr);
     }
 
@@ -493,6 +515,14 @@
         <div><strong>Owner</strong></div><div>${(p.owner_0_first || '') + (p.owner_0_last ? ' ' + p.owner_0_last : '')} (${p.owner_0_pct || ''}%)</div>
         <div><strong>Owner Email</strong></div><div>${p.owner_0_email || ''}</div>
         <div><strong>Owner Phone</strong></div><div>${p.owner_0_mobile || ''}</div>
+        <div><strong>IDIQ</strong></div><div>${
+          data.idiq_username
+            ? `<span class="idiq-yes">credentials on file</span> <span style="color:#cbd5e1">${esc(data.idiq_username)}</span>`
+              + (data.idiq_password_saved
+                   ? ' <span style="color:#94a3b8;font-size:12px">· password stored encrypted</span>'
+                   : ' <span style="color:#fbbf24;font-size:12px">· username only, no password</span>')
+            : '<span style="color:#94a3b8">Not provided yet — use “Resend credit link” to ask for them.</span>'
+        }</div>
       </div>
 
       ${(() => {
@@ -694,6 +724,13 @@
       currentPage = 1;
       reload();
     }, 300);
+  });
+
+  // Changing the filter is a new query, so it returns to page 1 rather than
+  // landing on an offset that no longer exists in the filtered set.
+  document.getElementById('idiqFilter').addEventListener('change', () => {
+    currentPage = 1;
+    reload();
   });
 
   document.getElementById('refreshBtn').addEventListener('click', reload);

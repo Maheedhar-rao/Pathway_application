@@ -2889,7 +2889,8 @@ def api_submissions():
     end = offset + limit - 1
 
     query = sb.table("applications").select(
-        "id, created_at, business_legal_name, industry, loan_amount, owners, payload, company_website, rep_name, rep_email",
+        "id, created_at, business_legal_name, industry, loan_amount, owners, payload, "
+        "company_website, rep_name, rep_email, idiq_username",
         count="exact",
     )
 
@@ -2906,11 +2907,20 @@ def api_submissions():
             f"business_legal_name.ilike.{pattern},industry.ilike.{pattern},rep_name.ilike.{pattern}"
         )
 
+    if request.args.get("idiq") == "missing":
+        query = query.is_("idiq_username", "null")
+    elif request.args.get("idiq") == "saved":
+        query = query.not_.is_("idiq_username", "null")
+
     res = query.order("id", desc=True).range(start, end).execute()
     rows = res.data or []
     for r in rows:
         if r.get("loan_amount") is not None:
             r["loan_amount"] = float(r["loan_amount"])
+        # A boolean for the list, not the credential itself: the table needs to
+        # say whether a pull can be run, and nothing more. The username is on
+        # the detail view, where you have opened one specific application.
+        r["idiq_saved"] = bool(r.pop("idiq_username", None))
     return jsonify({"rows": rows, "total": res.count or 0})
 
 @app.route("/api/submissions/<int:sid>/resend-credit-link", methods=["POST"])
@@ -3081,7 +3091,8 @@ def api_remind_docs(sid: int):
 @admin_required
 def api_submission_detail(sid: int):
     app_res = sb.table("applications").select(
-        "id, created_at, business_legal_name, industry, loan_amount, owners, payload, company_website, rep_name, rep_email"
+        "id, created_at, business_legal_name, industry, loan_amount, owners, payload, "
+        "company_website, rep_name, rep_email, idiq_username, idiq_password_encrypted"
     ).eq("id", sid).execute()
     rows = app_res.data or []
     if not rows:
@@ -3089,6 +3100,11 @@ def api_submission_detail(sid: int):
     app_row = rows[0]
     if app_row.get("loan_amount") is not None:
         app_row["loan_amount"] = float(app_row["loan_amount"])
+    # The password is a Fernet token and stays on the server. The dashboard is
+    # told only that one exists; whatever runs the credit pull decrypts it
+    # there, and a password does not belong in a JSON response that a browser
+    # extension or a screenshot can pick up.
+    app_row["idiq_password_saved"] = bool(app_row.pop("idiq_password_encrypted", None))
 
     files_res = sb.table("application_files").select(
         "id, filename, storage_path, size_bytes, doc_type"
