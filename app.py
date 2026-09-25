@@ -846,6 +846,50 @@ def _submission_record_rows(sid: int) -> tuple[list, dict]:
     return rows, ctx
 
 
+def _signature_flowables(sig_data: str, label: str, label_style) -> list:
+    """Signature image sitting on its own signature line.
+
+    The pad saves light strokes (drawn for its dark background) on a transparent
+    canvas that's mostly empty space, so crop to the ink, re-ink it dark, and
+    size it by its real aspect ratio before drawing the line right under it.
+    """
+    if not sig_data or not sig_data.startswith("data:image/png;base64,"):
+        return []
+    try:
+        from PIL import Image as PILImage
+        pad = PILImage.open(BytesIO(base64.b64decode(sig_data.split(",", 1)[1]))).convert("RGBA")
+        alpha = pad.getchannel("A")
+        bbox = alpha.getbbox()
+        if not bbox:
+            return []
+        margin = 6
+        bbox = (max(bbox[0] - margin, 0), max(bbox[1] - margin, 0),
+                min(bbox[2] + margin, pad.width), min(bbox[3] + margin, pad.height))
+        alpha = alpha.crop(bbox)
+        ink = PILImage.new("RGBA", alpha.size, (15, 23, 42, 255))
+        ink.putalpha(alpha)
+        buf = BytesIO()
+        ink.save(buf, format="PNG")
+        buf.seek(0)
+    except Exception:
+        logging.exception("Could not process signature image")
+        return []
+
+    max_w, max_h = 3.2 * inch, 1.1 * inch
+    scale = min(max_w / alpha.width, max_h / alpha.height)
+    width, height = alpha.width * scale, alpha.height * scale
+    img = Image(buf, width=width, height=height)
+    img.hAlign = "LEFT"
+    line_w = max(width, 2.8 * inch)
+    return [
+        Spacer(1, 8),
+        img,
+        HRFlowable(width=line_w, thickness=0.5, color=BRAND_DARK,
+                   hAlign="LEFT", spaceBefore=0, spaceAfter=4),
+        Paragraph(label, label_style),
+    ]
+
+
 def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str = None) -> BytesIO:
     """Generate a professionally styled PDF summary of the application."""
     if not PDF_ENABLED:
@@ -1026,18 +1070,10 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
     elements.append(_styled_section_table(sig_info))
 
     # Render hand signature image
-    sig_data = form_data.get("signature_data", "")
-    if sig_data and sig_data.startswith("data:image/png;base64,"):
-        raw = base64.b64decode(sig_data.split(",", 1)[1])
-        sig_buf = BytesIO(raw)
-        sig_img = Image(sig_buf, width=3.2*inch, height=1.2*inch)
-        sig_img.hAlign = 'LEFT'
-        elements.append(Spacer(1, 8))
-        elements.append(sig_img)
-        elements.append(HRFlowable(width="50%", thickness=0.5, color=BRAND_DARK, spaceAfter=4))
-        elements.append(Paragraph("Applicant Signature", ParagraphStyle(
-            'SigLabel', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY
-        )))
+    elements.extend(_signature_flowables(
+        form_data.get("signature_data", ""), "Applicant Signature",
+        ParagraphStyle('SigLabel', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY),
+    ))
 
     # Second-owner signature block (only if a second owner was added)
     if (form_data.get("has_owner_1") or "No").strip() == "Yes":
@@ -1048,18 +1084,10 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
         ]
         elements.append(_styled_section_table(owner1_sig_info))
 
-        owner1_sig_data = form_data.get("owner_1_signature_data", "")
-        if owner1_sig_data and owner1_sig_data.startswith("data:image/png;base64,"):
-            raw1 = base64.b64decode(owner1_sig_data.split(",", 1)[1])
-            sig_buf1 = BytesIO(raw1)
-            sig_img1 = Image(sig_buf1, width=3.2*inch, height=1.2*inch)
-            sig_img1.hAlign = 'LEFT'
-            elements.append(Spacer(1, 8))
-            elements.append(sig_img1)
-            elements.append(HRFlowable(width="50%", thickness=0.5, color=BRAND_DARK, spaceAfter=4))
-            elements.append(Paragraph("Second Owner Signature", ParagraphStyle(
-                'SigLabel2', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY
-            )))
+        elements.extend(_signature_flowables(
+            form_data.get("owner_1_signature_data", ""), "Second Owner Signature",
+            ParagraphStyle('SigLabel2', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY),
+        ))
 
     # ── Submission record ──
     # Never allowed to cost the document: any failure here drops the page and
