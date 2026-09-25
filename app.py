@@ -1119,6 +1119,49 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
     return buffer
 
 
+# The signed application, exactly as the merchant signed it, kept in storage.
+# Until this existed the PDF above only went out by email and no copy of the
+# signed document was held anywhere. It is a record: lenders are sent CROC's own
+# rebuild, which carries the real contact details this copy masks.
+#
+# Deliberately outside the {sid}/ folder: CROC reads any file under {sid}/ as a
+# possible bank statement and any {sid}/ folder as "this lead has statements".
+SIGNED_APPLICATION_PREFIX = "signed-applications"
+
+
+def signed_application_path(sid: int) -> str:
+    return f"{SIGNED_APPLICATION_PREFIX}/{int(sid)}.pdf"
+
+
+def store_application_pdf(sid: int, pdf_bytes: Optional[bytes] = None) -> bool:
+    """Save the application PDF for *sid* to storage, overwriting any earlier copy.
+
+    Pass the bytes when the caller already built them; otherwise the PDF is
+    regenerated from the stored payload, which is how a later step (documents,
+    credit setup) gets onto the submission record page. Best-effort: never
+    raises, because a failed archive must not cost the merchant their submit.
+    """
+    if not PDF_ENABLED:
+        return False
+    try:
+        if pdf_bytes is None:
+            rows = sb.table("applications").select(
+                "id, payload, rep_name").eq("id", sid).limit(1).execute().data or []
+            if not rows:
+                return False
+            buf = generate_application_pdf(rows[0].get("payload") or {}, sid,
+                                           rows[0].get("rep_name"))
+            if buf is None:
+                return False
+            buf.seek(0)
+            pdf_bytes = buf.read()
+        _upload_to_storage(pdf_bytes, signed_application_path(sid))
+        return True
+    except Exception as exc:
+        log.error("Could not store application PDF for %s: %s", sid, exc)
+        return False
+
+
 def _build_email_content(business_name, submission_id, rep_name, attached_files,
                          email_type="new_application", resume_url=None, pdf_url=None,
                          lead_details=None):
@@ -2286,6 +2329,7 @@ def submit_application():
             if pdf_buffer:
                 pdf_buffer.seek(0)
                 pdf_bytes = pdf_buffer.read()
+                store_application_pdf(submission_id, pdf_bytes)
                 recipients = _internal_recipients()
 
                 def _bg_send_team(recips, biz, sid, rname):
@@ -2347,6 +2391,9 @@ def upload_documents(sid):
         log_event("documents_uploaded", application_id=sid,
                   payload={"types": _saved_types, "files": len(saved_paths),
                            "failed": len(_failed)})
+    if saved_paths:
+        # Put this upload onto the stored copy's submission record.
+        store_application_pdf(sid)
 
     if saved_paths:
         try:
@@ -2586,6 +2633,7 @@ def submit():
                 # on buffer position.
                 pdf_buffer.seek(0)
                 pdf_bytes = pdf_buffer.read()
+                store_application_pdf(submission_id, pdf_bytes)
 
                 recipients = _internal_recipients()
 
@@ -2820,6 +2868,7 @@ def credit_setup_credentials():
     log_event("idiq_credentials_saved", application_id=sid,
               payload={"has_username": bool(username), "has_password": bool(password),
                        "page": "credit_setup"})
+    store_application_pdf(sid)
     return redirect(url_for("credit_setup", done="1"))
 
 
@@ -2891,6 +2940,7 @@ def idiq_credentials():
     log_event("idiq_credentials_saved", application_id=sid,
               payload={"has_username": bool(username), "has_password": bool(password),
                        "page": "thank_you"})
+    store_application_pdf(sid)
     return redirect(url_for("thank_you", sid=sid, done="1"))
 
 
@@ -2905,6 +2955,8 @@ def upload_docs():
         log_event("documents_uploaded", application_id=sid,
                   payload={"types": saved, "files": len(attached_paths),
                            "failed": len(failed)})
+    if attached_paths:
+        store_application_pdf(sid)
 
     # Email uploaded documents to the internal inboxes (in background)
     if attached_paths:
