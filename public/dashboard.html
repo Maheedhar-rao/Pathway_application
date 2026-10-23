@@ -191,6 +191,7 @@
                 <th>Owners</th>
                 <th>Rep</th>
                 <th>IDIQ</th>
+                <th>Bank</th>
                 <th></th>
               </tr>
             </thead>
@@ -329,6 +330,39 @@
     }
   }
 
+  // Plaid status in words: a connection that is still fetching, or that came
+  // back with nothing, must not read as "statements on file".
+  const PLAID_STATUS = {
+    fetching: 'fetching…', complete: 'statements on file',
+    partial: 'partly fetched', failed: 'fetch failed',
+  };
+  function bankCell(bank) {
+    if (!bank) return '<span class="idiq-no">awaiting</span>';
+    if (bank.source === 'upload') return '<span class="idiq-yes">PDFs uploaded</span>';
+    const ok = bank.status === 'complete';
+    return `<span class="${ok ? 'idiq-yes' : 'idiq-no'}">Plaid${bank.institution ? ' · ' + esc(bank.institution) : ''}`
+      + ` — ${esc(PLAID_STATUS[bank.status] || bank.status)}</span>`;
+  }
+  function plaidDetail(items) {
+    if (!items || !items.length) {
+      return '<span style="color:#94a3b8">Not connected — statements, if any, were uploaded as PDFs.</span>';
+    }
+    return items.map(it => {
+      const accts = (it.accounts || []).map(a =>
+        esc((a.name || a.subtype || 'account') + (a.mask ? ' ••' + a.mask : ''))).join(', ');
+      const got = [
+        it.statements_count ? `${it.statements_count} statement${it.statements_count === 1 ? '' : 's'}` : '',
+        it.asset_report_ready ? 'Asset Report' : '',
+      ].filter(Boolean).join(' + ');
+      return `<div><span class="${it.status === 'complete' ? 'idiq-yes' : 'idiq-no'}">${esc(PLAID_STATUS[it.status] || it.status)}</span>`
+        + ` <span style="color:#cbd5e1">${esc(it.institution_name || 'Bank')}</span>`
+        + (accts ? ` <span style="color:#94a3b8;font-size:12px">· ${accts}</span>` : '')
+        + (got ? ` <span style="color:#94a3b8;font-size:12px">· ${got}</span>` : '')
+        + (it.last_error ? `<div style="color:#fbbf24;font-size:12px">${esc(it.last_error)}</div>` : '')
+        + '</div>';
+    }).join('');
+  }
+
   function renderRows(data) {
     const rows = (data && data.rows) || [];
     totalRows = (data && data.total) || 0;
@@ -359,6 +393,7 @@
         <td>${item.idiq_saved
               ? '<span class="idiq-yes">credentials on file</span>'
               : '<span class="idiq-no">awaiting</span>'}</td>
+        <td>${bankCell(item.bank)}</td>
         <td><button class="btn primary" onclick="showDetails(${item.id})">View</button></td>
       `;
       tbody.appendChild(tr);
@@ -366,7 +401,7 @@
 
     if (rows.length === 0) {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td colspan="9" style="text-align:center;color:#94a3b8;padding:24px">No submissions found.</td>`;
+      tr.innerHTML = `<td colspan="10" style="text-align:center;color:#94a3b8;padding:24px">No submissions found.</td>`;
       tbody.appendChild(tr);
     }
 
@@ -409,6 +444,10 @@
     idiq_credentials_saved:   'Saved IDIQ credentials',
     idiq_credentials_skipped: 'Skipped IDIQ credentials',
     docs_reminder_sent:       'Missing-documents reminder sent',
+    bank_connected:           'Connected their bank through Plaid',
+    bank_connect_exited:      'Closed Plaid without connecting',
+    bank_oauth_returned:      'Came back from their bank\'s login page',
+    bank_documents_received:  'Bank statements fetched from Plaid',
     admin_viewed_application: 'Admin opened this application',
     admin_downloaded_pdf:     'Admin downloaded the PDF',
   };
@@ -524,6 +563,7 @@
                    : ' <span style="color:#fbbf24;font-size:12px">· username only, no password</span>')
             : '<span style="color:#94a3b8">Not provided yet — use “Resend credit link” to ask for them.</span>'
         }</div>
+        <div><strong>Bank (Plaid)</strong></div><div>${plaidDetail(data.plaid_items)}</div>
       </div>
 
       ${(() => {
@@ -558,9 +598,9 @@
 
       <h4 style="margin-top:16px">Bank Statements</h4>
       <div class="pdf-grid">
-        ${(data.files || []).filter(f => f.doc_type === 'bank_statement').map(f => `
+        ${(data.files || []).filter(f => f.doc_type === 'bank_statement' || f.doc_type === 'asset_report').map(f => `
           <div class="pdf-box">
-            <div class="chip">📄 ${f.filename}</div>
+            <div class="chip">📄 ${f.doc_type === 'asset_report' ? 'Asset Report — ' : ''}${esc(f.filename)}</div>
             <embed src="${f.url}" type="application/pdf"/>
           </div>
         `).join('') || '<p class="lead">No bank statements uploaded.</p>'}
@@ -568,7 +608,7 @@
 
       <h4 style="margin-top:16px">Other Documents</h4>
       <div class="pdf-grid">
-        ${(data.files || []).filter(f => f.doc_type !== 'bank_statement').map(f => `
+        ${(data.files || []).filter(f => f.doc_type !== 'bank_statement' && f.doc_type !== 'asset_report').map(f => `
           <div class="pdf-box">
             <div class="chip">📎 ${f.doc_type || 'file'} — ${f.filename}</div>
             ${f.filename.toLowerCase().endsWith('.pdf')

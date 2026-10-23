@@ -153,6 +153,12 @@
     }
     .btn-credit:hover { transform: translateY(-1px); box-shadow: 0 14px 28px rgba(251, 191, 36, 0.4); }
     .btn-credit:active { transform: translateY(0); }
+    .btn-credit:disabled { opacity: .6; cursor: progress; transform: none; }
+
+    .plaid-step .plaid-status { margin: 12px 0 0; font-size: 13px; }
+    .plaid-step .plaid-status:empty { display: none; }
+    .plaid-step .plaid-status.ok { color: #34d399; }
+    .plaid-step .plaid-status.err { color: #f87171; }
 
     .creds-form .field label {
       color: #fde68a;
@@ -265,9 +271,25 @@
       <div class="credit-card-body">
         <div class="step-stack">
 
-          <!-- Step 1: IDIQ signup -->
-          <div class="step-block">
+          {% set shift = 1 if offer_plaid else 0 %}
+          {% if offer_plaid %}
+          <!-- Bank connection: offered while no statements are on file -->
+          <div class="step-block plaid-step" data-plaid-connect data-context="resume" data-csrf="{{ csrf_token() }}">
             <div class="step-marker">1</div>
+            <h3>Connect your business bank</h3>
+            <p>
+              We still need 4 months of business bank statements. Log in to your bank through Plaid and we'll
+              fetch them for you — read-only and encrypted, and we never see your bank password.
+              Prefer PDFs? Reply to our email with them attached.
+            </p>
+            <button type="button" class="btn-credit plaid-btn">Connect your bank</button>
+            <p class="plaid-status" role="status" aria-live="polite"></p>
+          </div>
+          {% endif %}
+
+          <!-- IDIQ signup -->
+          <div class="step-block">
+            <div class="step-marker">{{ 1 + shift }}</div>
             <h3>Create your IDIQ account</h3>
             <p>
               We run a <strong style="color:#fde68a;">soft credit pull</strong> through IDIQ — it won't affect your score
@@ -281,9 +303,9 @@
             </a>
           </div>
 
-          <!-- Step 2: credentials capture -->
+          <!-- Credentials capture -->
           <div class="step-block">
-            <div class="step-marker">2</div>
+            <div class="step-marker">{{ 2 + shift }}</div>
             <h3>Share your IDIQ login</h3>
             <p>
               Once your account is created, enter the username and password here. We encrypt the password before storing it —
@@ -327,6 +349,11 @@
     </div>
     {% endif %}
   </main>
+
+  {% if offer_plaid and not is_done %}
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <script src="{{ url_for('static', filename='plaid-connect.js') }}"></script>
+  {% endif %}
 
   <script>
     // Prevent navigating back to anything — including the original wizard.

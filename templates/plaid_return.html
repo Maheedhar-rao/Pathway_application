@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <meta charset="UTF-8" />
+  <meta http-equiv="Cache-Control" content="no-store" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Harvest Lending X {{ client_name or 'Pathway Catalyst' }} — Application Form</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <!-- Back from an OAuth bank's own login page (/plaid/oauth-return). The page
+       the applicant left is gone, so this one finishes the Plaid connection and
+       then carries on as that page would have. -->
+  <header class="pc-header">
+    <div class="brand">
+      <div class="brand-left">
+        <div class="logo-wrap">
+          <img src="{{ url_for('static', filename='pathway-logo.png') }}"
+               alt="Pathway Catalyst Logo" class="logo" loading="eager" />
+        </div>
+        <div class="brand-text">
+          <span class="badge">Harvest Lending X {{ client_name or 'Pathway Catalyst' }}</span>
+          <h1>Business Financing Application</h1>
+          <p class="lead">Fast, secure, and confidential submission.</p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    {% if context == 'form' %}
+    <div class="progress-steps">
+      <div class="step completed" data-step="1"><span class="step-num">1</span><span>Contact</span></div>
+      <div class="step-connector"></div>
+      <div class="step completed" data-step="2"><span class="step-num">2</span><span>Business</span></div>
+      <div class="step-connector"></div>
+      <div class="step completed" data-step="3"><span class="step-num">3</span><span>Primary Owner</span></div>
+      <div class="step-connector"></div>
+      <div class="step completed" data-step="4"><span class="step-num">4</span><span>Second Owner</span></div>
+      <div class="step-connector"></div>
+      <div class="step active" data-step="5"><span class="step-num">5</span><span>Documents</span></div>
+      <div class="step-connector"></div>
+      <div class="step" data-step="6"><span class="step-num">6</span><span>Credit Setup</span></div>
+      <div class="step-connector"></div>
+      <div class="step" data-step="7"><span class="step-num">7</span><span>Credit Login</span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h2>Supporting Documents</h2>
+        <span class="pill">Step 5 of 7 — Optional</span>
+      </div>
+      <div class="card-body">
+        <div class="plaid-connect" data-plaid-connect data-context="form" data-csrf="{{ csrf_token() }}"
+             data-link-token="{{ link_token }}">
+          <h4>Connect your business bank</h4>
+          <p>Welcome back{% if business %}, {{ business }}{% endif %}. We're finishing the connection to your bank.</p>
+          <button type="button" class="btn primary plaid-btn">Connect your bank</button>
+          <p class="plaid-status" role="status" aria-live="polite"></p>
+        </div>
+
+        <div id="bank-pdfs">
+          <div class="plaid-or">or upload PDFs</div>
+          <div class="field" style="margin-bottom:16px;">
+            <label>4 Months Business Bank Statements (PDF)</label>
+            <div class="uploader" style="padding:16px;">
+              <input type="file" name="bank_files" accept="application/pdf" multiple />
+            </div>
+          </div>
+        </div>
+
+        <div class="grid cols-2" style="margin-top:16px;">
+          <div class="field">
+            <label>Driver's License (optional)</label>
+            <div class="uploader" style="padding:16px;">
+              <input type="file" name="id_doc" accept="application/pdf,image/*" />
+            </div>
+          </div>
+          <div class="field">
+            <label>Voided Check (optional)</label>
+            <div class="uploader" style="padding:16px;">
+              <input type="file" name="voided_check" accept="application/pdf,image/*" />
+            </div>
+          </div>
+        </div>
+
+        <p style="margin:14px 0 0;color:var(--muted);font-size:13px;line-height:1.5;">
+          Next, we'll walk you through linking a credit account so we can run a
+          <strong>soft credit pull</strong> (no score impact).
+        </p>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn primary" id="uploadDocsBtn"><span>Next</span></button>
+      </div>
+    </div>
+    {% else %}
+    <div class="card">
+      <div class="card-header">
+        <h2>Connect your business bank</h2>
+      </div>
+      <div class="card-body">
+        <div class="plaid-connect" data-plaid-connect data-context="resume" data-csrf="{{ csrf_token() }}"
+             data-link-token="{{ link_token }}" data-continue-url="{{ url_for('credit_setup') }}">
+          <h4>Welcome back{% if business %}, {{ business }}{% endif %}</h4>
+          <p>We're finishing the connection to your bank, then we'll take you back to your credit setup.</p>
+          <button type="button" class="btn primary plaid-btn">Connect your bank</button>
+          <p class="plaid-status" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+      <div class="actions">
+        <a class="btn ghost" href="{{ url_for('credit_setup') }}">Back to credit setup</a>
+      </div>
+    </div>
+    {% endif %}
+  </main>
+
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <script src="{{ url_for('static', filename='plaid-connect.js') }}"></script>
+  {% if context == 'form' %}
+  <script>
+    // Same hand-off as the wizard's step 5: whatever was picked goes to
+    // /upload-documents, then on to IDIQ signup on the thank-you page.
+    (function () {
+      var sid = {{ sid|tojson }};
+      var next = '{{ url_for("thank_you") }}?sid=' + sid;
+      // The PDF uploader goes away once the bank connects -- its statements are
+      // already on their way. It starts visible so a Plaid that fails to load
+      // still leaves a way to send them.
+      document.addEventListener('plaid:done', function (e) {
+        if (e.detail.connected) document.getElementById('bank-pdfs').hidden = true;
+      });
+
+      var btn = document.getElementById('uploadDocsBtn');
+      btn.addEventListener('click', function () {
+        var fd = new FormData();
+        var hasFiles = false;
+        ['bank_files', 'id_doc', 'voided_check'].forEach(function (name) {
+          var input = document.querySelector('input[name="' + name + '"]');
+          if (!input || input.closest('[hidden]')) return;
+          for (var i = 0; i < input.files.length; i++) { fd.append(name, input.files[i]); hasFiles = true; }
+        });
+        if (!hasFiles) { window.location.href = next; return; }
+        fd.append('csrf_token', '{{ csrf_token() }}');
+        btn.disabled = true;
+        btn.classList.add('loading');
+        fetch('/upload-documents/' + sid, { method: 'POST', body: fd })
+          .catch(function () {})
+          .then(function () { window.location.href = next; });
+      });
+    })();
+  </script>
+  {% endif %}
+</body>
+</html>

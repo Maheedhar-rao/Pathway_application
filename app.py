@@ -18,6 +18,7 @@ import smtplib
 import threading
 import time
 import traceback
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -175,6 +176,57 @@ def decrypt_idiq_password(token: str) -> Optional[str]:
         return _IDIQ_FERNET.decrypt(token.encode("utf-8")).decode("utf-8")
     except (InvalidToken, ValueError):
         return None
+
+
+# ── Plaid ────────────────────────────────────────────────────────────────────
+# The applicant can connect their business bank through Plaid Link instead of
+# uploading statement PDFs. Assets is the required product (every bank Link
+# lists supports it); Statements is required-if-supported, so a bank that can't
+# produce statement PDFs still connects and still yields an Asset Report rather
+# than disappearing from the Link search. Blank keys hide the option entirely.
+PLAID_CLIENT_ID = os.environ.get("PLAID_CLIENT_ID", "").strip()
+PLAID_SECRET = os.environ.get("PLAID_SECRET", "").strip()
+PLAID_ENV = os.environ.get("PLAID_ENV", "production").strip().lower()
+PLAID_ENABLED = bool(PLAID_CLIENT_ID and PLAID_SECRET)
+PLAID_BASE_URL = {
+    "sandbox": "https://sandbox.plaid.com",
+    "production": "https://production.plaid.com",
+}.get(PLAID_ENV, "https://production.plaid.com")
+
+# Lenders ask for four months. Five months back means four *closed* monthly
+# statements even early in the month, before the current one is issued.
+PLAID_STATEMENT_DAYS = 155
+PLAID_ASSET_DAYS = 120
+
+
+class PlaidError(Exception):
+    def __init__(self, code: str, message: str = ""):
+        super().__init__(f"{code}: {message}" if message else code)
+        self.code = code
+
+
+def plaid_post(path: str, body: dict, *, raw: bool = False, timeout: float = 30):
+    """POST to the Plaid API. Returns parsed JSON, or the raw bytes for the PDF
+    endpoints. Raises PlaidError carrying Plaid's error_code on any failure."""
+    req = urllib.request.Request(
+        PLAID_BASE_URL + path,
+        data=json.dumps({"client_id": PLAID_CLIENT_ID, "secret": PLAID_SECRET, **body}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read()
+    except urllib.error.HTTPError as exc:
+        try:
+            err = json.loads(exc.read() or b"{}")
+        except ValueError:
+            err = {}
+        raise PlaidError(err.get("error_code") or f"HTTP_{exc.code}",
+                         err.get("error_message") or "")
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise PlaidError("NETWORK_ERROR", str(exc))
+    return data if raw else json.loads(data)
 
 
 # ── Resume tokens ────────────────────────────────────────────────────────────
@@ -1960,12 +2012,18 @@ def _store_uploaded_file(sid: int, file_storage, dtype: str,
     """Upload one file to Supabase Storage + insert application_files row.
     Returns True on success. Failures are logged + appended to `failed` so
     the caller can continue processing the rest of the batch."""
-    original = file_storage.filename or "file"
+    return _store_file_bytes(sid, file_storage.filename or "file", file_storage.read(),
+                             file_storage.content_type or "application/octet-stream",
+                             dtype, attached_paths, failed)
+
+
+def _store_file_bytes(sid: int, original: str, file_bytes: bytes, content_type: str,
+                      dtype: str, attached_paths: List[str], failed: List[str]) -> bool:
+    """The storage half of _store_uploaded_file, for files that arrive as bytes
+    rather than an upload (Plaid statements and Asset Reports)."""
     safe = original.replace("/", "_").replace("\\", "_")
     unique = f"{uuid.uuid4().hex[:8]}_{safe}"
     bucket_path = f"{sid}/{dtype}/{unique}"
-    file_bytes = file_storage.read()
-    content_type = file_storage.content_type or "application/octet-stream"
 
     last_exc = None
     for attempt in range(3):
@@ -2101,6 +2159,7 @@ def _render_form(client_name=None, brand_slug=None):
         rep_sig=rep_sig,
         idiq_signup_url=IDIQ_SIGNUP_URL,
         client_name=client_name,
+        plaid_enabled=PLAID_ENABLED,
     )
 
 @app.route("/")
@@ -2783,12 +2842,18 @@ def credit_setup():
     row = rows[0]
     log_event("credit_setup_viewed", application_id=sid,
               payload={"idiq_saved": bool(row.get("idiq_username"))})
+    # The missing-docs reminder lands here, so this page is also where a bank
+    # can be connected after the fact. Offered only while nothing covering the
+    # bank is on file -- statements, an Asset Report, or a connection in flight.
+    bank_on_file = bool(_get_uploaded_doc_types(sid) & {"bank_statement", "asset_report"}) \
+        or bool(_plaid_items_for([sid]).get(sid))
     return render_template(
         "credit_setup.html",
         sid=sid,
         business=row.get("business_legal_name"),
         idiq_signup_url=IDIQ_SIGNUP_URL,
         idiq_already_saved=bool(row.get("idiq_username")),
+        offer_plaid=PLAID_ENABLED and not bank_on_file,
         is_done=(request.args.get("done") == "1"),
     )
 
@@ -2942,6 +3007,310 @@ def upload_docs():
 
     return render_template("thank_you.html", sid=sid, uploaded=saved, failed=failed)
 
+
+# -------------------- Plaid bank connection --------------------
+# Two pages offer Link: step 5 of the wizard, and the credit-setup page the
+# missing-docs reminder sends people to. Each already knows its application from
+# the signed session -- the wizard from the submit, credit setup from the resume
+# link -- so the browser says which page it is on and never names an id. A
+# connection is a standing grant to someone's bank data; it must not be possible
+# to file one against an application by guessing its number.
+_PLAID_SESSION_KEYS = {"form": SESSION_VISIT_APP_KEY, "resume": SESSION_RESUME_KEY}
+SESSION_PLAID_LINK = "plaid_link"
+
+
+def _plaid_session_sid() -> Optional[int]:
+    body = request.get_json(silent=True) or {}
+    key = _PLAID_SESSION_KEYS.get(body.get("context"))
+    return session.get(key) if key else None
+
+
+@app.route("/plaid/link-token", methods=["POST"])
+def plaid_link_token():
+    if not PLAID_ENABLED:
+        return jsonify(error="Bank connection is not available right now."), 503
+    sid = _plaid_session_sid()
+    if not sid:
+        return jsonify(error="Your session has expired. Please reopen your link."), 403
+
+    today = datetime.now(EASTERN).date()
+    body = {
+        # Link shows this to the applicant; Plaid caps it at 30 characters.
+        "client_name": (current_brand_name() or "Pathway Catalyst")[:30],
+        "user": {"client_user_id": f"application-{sid}"},
+        "products": ["assets"],
+        "required_if_supported_products": ["statements"],
+        "statements": {
+            "start_date": (today - timedelta(days=PLAID_STATEMENT_DAYS)).isoformat(),
+            "end_date": today.isoformat(),
+        },
+        "country_codes": ["US"],
+        "language": "en",
+        # On this host, because the return page needs this session cookie and
+        # the cookie is per host -- a brand domain must come back to itself.
+        # Each host has to be on the Plaid dashboard's allowed redirect URIs.
+        "redirect_uri": url_for("plaid_oauth_return", _external=True),
+    }
+    try:
+        try:
+            res = plaid_post("/link/token/create", body)
+        except PlaidError as exc:
+            # A host missing from the dashboard list must not take bank
+            # connection down with it: without a redirect URI, OAuth banks
+            # still work in a popup everywhere except in-app browsers.
+            if exc.code != "INVALID_FIELD":
+                raise
+            log.error("Plaid rejected redirect_uri %s (%s) -- add it to the Plaid "
+                      "dashboard; continuing without it", body["redirect_uri"], exc)
+            body.pop("redirect_uri")
+            res = plaid_post("/link/token/create", body)
+    except PlaidError as exc:
+        log.error("Plaid link token failed for %s: %s", sid, exc)
+        return jsonify(error="Bank connection is not available right now. "
+                             "Please upload your statements instead."), 502
+
+    # An OAuth bank on mobile navigates away from this page and comes back to
+    # /plaid/oauth-return, which must reopen Link with this same token and
+    # knows which page the applicant left from. A link token only opens Link,
+    # and expires in hours, so the signed cookie is a fine place for it.
+    session[SESSION_PLAID_LINK] = {"token": res["link_token"],
+                                   "context": (request.get_json(silent=True) or {}).get("context")}
+    return jsonify(link_token=res["link_token"])
+
+
+@app.route("/plaid/oauth-return")
+def plaid_oauth_return():
+    """Where an OAuth bank sends the applicant back after they log in there.
+
+    The page they left is gone by now, so this one finishes the connection
+    and then carries on as that page would have: from the wizard, it is step
+    5 again -- driver's license, voided check, and statements as PDFs if the
+    bank didn't connect -- then on to IDIQ signup; from credit setup, it goes
+    back to credit setup."""
+    link = session.get(SESSION_PLAID_LINK) or {}
+    context = link.get("context")
+    key = _PLAID_SESSION_KEYS.get(context)
+    sid = session.get(key) if key else None
+    if not (PLAID_ENABLED and sid and link.get("token")):
+        return redirect(url_for("credit_setup_link_lost"))
+
+    log_event("bank_oauth_returned", application_id=sid, payload={"context": context})
+    business = None
+    try:
+        rows = sb.table("applications").select("business_legal_name").eq(
+            "id", sid).limit(1).execute().data or []
+        business = rows[0].get("business_legal_name") if rows else None
+    except Exception as exc:
+        log.warning("OAuth return lookup failed for %s: %s", sid, exc)
+    return render_template(
+        "plaid_return.html",
+        sid=sid,
+        context=context,
+        link_token=link["token"],
+        business=business,
+        client_name=current_brand_name(),
+    )
+
+
+@app.route("/plaid/exchange", methods=["POST"])
+def plaid_exchange():
+    if not PLAID_ENABLED:
+        abort(503)
+    sid = _plaid_session_sid()
+    if not sid:
+        return jsonify(error="Your session has expired. Please reopen your link."), 403
+    body = request.get_json(silent=True) or {}
+    public_token = (body.get("public_token") or "").strip()
+    if not public_token:
+        abort(400)
+
+    try:
+        ex = plaid_post("/item/public_token/exchange", {"public_token": public_token})
+        access_token, item_id = ex["access_token"], ex["item_id"]
+        acct = plaid_post("/accounts/get", {"access_token": access_token})
+    except PlaidError as exc:
+        log.error("Plaid exchange failed for %s: %s", sid, exc)
+        return jsonify(error="We couldn't finish connecting your bank. "
+                             "Please try again or upload your statements."), 502
+
+    # Display detail only -- balances and account numbers stay at Plaid.
+    accounts = [{"name": a.get("name"), "mask": a.get("mask"), "subtype": a.get("subtype")}
+                for a in acct.get("accounts") or []]
+    # The institution name from Link metadata is for display, and is replaced
+    # by Plaid's own from /statements/list once the pull runs.
+    inst = body.get("institution") or {}
+    institution_name = str(inst.get("name") or "")[:120] or None
+
+    try:
+        row = sb.table("plaid_items").insert({
+            "application_id": sid,
+            "item_id": item_id,
+            "access_token_encrypted": encrypt_idiq_password(access_token),
+            "institution_id": (acct.get("item") or {}).get("institution_id"),
+            "institution_name": institution_name,
+            "accounts": accounts,
+        }).execute().data[0]
+    except Exception as exc:
+        log.error("Failed to persist Plaid item for %s: %s", sid, exc)
+        return jsonify(error="We couldn't save your bank connection. "
+                             "Please upload your statements instead."), 500
+
+    session.pop(SESSION_PLAID_LINK, None)
+    log_event("bank_connected", application_id=sid,
+              payload={"source": "plaid", "institution": institution_name,
+                       "accounts": len(accounts)})
+    threading.Thread(target=_plaid_collect, args=(sid, row["id"], access_token),
+                     daemon=True).start()
+    return jsonify(ok=True, institution=institution_name, accounts=len(accounts))
+
+
+@app.route("/plaid/exit", methods=["POST"])
+def plaid_exit():
+    """Link closed without connecting. Recorded so a rep can see the applicant
+    tried, and whether a bank error rather than a change of mind stopped them."""
+    sid = _plaid_session_sid()
+    if sid:
+        body = request.get_json(silent=True) or {}
+        log_event("bank_connect_exited", application_id=sid,
+                  payload={"status": str(body.get("status") or "")[:60] or None,
+                           "error_code": str(body.get("error_code") or "")[:60] or None})
+    return jsonify(ok=True)
+
+
+def _plaid_collect(sid: int, plaid_item_row: int, access_token: str) -> None:
+    """Background: pull statement PDFs and an Asset Report for a new Item, file
+    them as application documents, and email them to the team like an upload.
+
+    Both products are asynchronous at Plaid -- statements can trail Link by a
+    few seconds, an Asset Report by minutes -- so each is polled with a ceiling.
+    Runs in a daemon thread; a deploy mid-pull leaves the row at 'fetching',
+    which the dashboard shows as such."""
+    paths: List[str] = []
+    failed: List[str] = []
+    errors: List[str] = []
+    statements_count = 0
+    institution_name = None
+
+    # ── Statements ──
+    listing = None
+    for attempt in range(6):
+        try:
+            listing = plaid_post("/statements/list", {"access_token": access_token})
+            if any(a.get("statements") for a in listing.get("accounts") or []):
+                break
+        except PlaidError as exc:
+            if exc.code == "PRODUCTS_NOT_SUPPORTED":
+                listing = None
+                break        # Bank has no statements; the Asset Report covers it.
+            if attempt == 5:
+                errors.append(f"statements: {exc.code}")
+        time.sleep(10)
+
+    if listing:
+        institution_name = listing.get("institution_name")
+        prefix = re.sub(r"[^A-Za-z0-9]+", "_", institution_name or "Bank").strip("_")
+        for acct in listing.get("accounts") or []:
+            for st in acct.get("statements") or []:
+                try:
+                    pdf = plaid_post("/statements/download",
+                                     {"access_token": access_token,
+                                      "statement_id": st["statement_id"]},
+                                     raw=True, timeout=60)
+                except PlaidError as exc:
+                    errors.append(f"statement download: {exc.code}")
+                    continue
+                name = (f"{prefix}_x{acct.get('account_mask') or ''}_"
+                        f"{st.get('year')}-{int(st.get('month') or 0):02d}.pdf")
+                if _store_file_bytes(sid, name, pdf, "application/pdf",
+                                     "bank_statement", paths, failed):
+                    statements_count += 1
+
+    # ── Asset Report ──
+    asset_ready = False
+    try:
+        created = plaid_post("/asset_report/create", {
+            "access_tokens": [access_token],
+            "days_requested": PLAID_ASSET_DAYS,
+            "options": {"client_report_id": f"application-{sid}"},
+        })
+        token = created["asset_report_token"]
+        for _ in range(40):      # ~10 minutes
+            time.sleep(15)
+            try:
+                pdf = plaid_post("/asset_report/pdf/get",
+                                 {"asset_report_token": token}, raw=True, timeout=60)
+            except PlaidError as exc:
+                if exc.code == "PRODUCT_NOT_READY":
+                    continue
+                raise
+            asset_ready = _store_file_bytes(sid, "Plaid_Asset_Report.pdf", pdf,
+                                            "application/pdf", "asset_report",
+                                            paths, failed)
+            break
+        else:
+            errors.append("asset report: not ready after 10 minutes")
+    except PlaidError as exc:
+        errors.append(f"asset report: {exc.code}")
+    except Exception as exc:
+        errors.append(f"asset report: {exc}")
+    if failed:
+        errors.append(f"storage: {len(failed)} file(s) failed")
+
+    status = ("complete" if not errors else
+              "partial" if (statements_count or asset_ready) else "failed")
+    update = {"status": status, "statements_count": statements_count,
+              "asset_report_ready": asset_ready,
+              "last_error": "; ".join(errors)[:500] or None,
+              "updated_at": datetime.now(EASTERN).isoformat()}
+    if institution_name:
+        update["institution_name"] = institution_name
+    try:
+        sb.table("plaid_items").update(update).eq("id", plaid_item_row).execute()
+    except Exception as exc:
+        log.error("Failed to update Plaid item %s: %s", plaid_item_row, exc)
+    if errors:
+        log.warning("Plaid pull for %s finished %s: %s", sid, status, errors)
+
+    log_event("bank_documents_received", application_id=sid, actor="system",
+              payload={"source": "plaid", "status": status,
+                       "statements": statements_count, "asset_report": asset_ready})
+
+    if paths:
+        try:
+            row = (sb.table("applications").select("business_legal_name, rep_name")
+                   .eq("id", sid).execute().data or [{}])[0]
+            ok = send_email_with_pdf(
+                to_emails=_internal_recipients(),
+                business_name=row.get("business_legal_name") or "",
+                pdf_buffer=None, submission_id=sid,
+                rep_name=row.get("rep_name"), attached_files=paths,
+                email_type="docs_update",
+            )
+            if ok:
+                _mark_email_sent(sid, "docs_email_sent_at")
+        except Exception as exc:
+            log.error("Plaid docs email failed for %s: %s", sid, exc)
+
+
+def _plaid_items_for(app_ids: list) -> dict:
+    """application_id -> its Plaid items (no tokens). Empty if the table isn't
+    there yet, so a deploy ahead of the migration doesn't take the dashboard
+    down with it."""
+    if not app_ids:
+        return {}
+    try:
+        res = sb.table("plaid_items").select(
+            "application_id, institution_name, accounts, status, statements_count, "
+            "asset_report_ready, last_error, created_at"
+        ).in_("application_id", app_ids).order("id").execute()
+    except Exception as exc:
+        log.warning("plaid_items lookup failed: %s", exc)
+        return {}
+    out: dict = {}
+    for r in res.data or []:
+        out.setdefault(r["application_id"], []).append(r)
+    return out
+
 # -------------------- JSON APIs for Dashboard --------------------
 @app.route("/api/submissions")
 @admin_required
@@ -2986,7 +3355,29 @@ def api_submissions():
 
     res = query.order("id", desc=True).range(start, end).execute()
     rows = res.data or []
+
+    # Bank column: connected through Plaid (and how the pull went), statements
+    # uploaded as PDFs, or nothing yet. Two batched lookups for the page, not
+    # one per row.
+    ids = [r["id"] for r in rows]
+    plaid = _plaid_items_for(ids)
+    uploaded_bank = set()
+    if ids:
+        try:
+            f_res = sb.table("application_files").select("application_id").in_(
+                "application_id", ids).eq("doc_type", "bank_statement").execute()
+            uploaded_bank = {f["application_id"] for f in f_res.data or []}
+        except Exception as exc:
+            log.warning("bank file lookup failed: %s", exc)
+
     for r in rows:
+        items = plaid.get(r["id"]) or []
+        r["bank"] = (
+            {"source": "plaid", "institution": items[-1].get("institution_name"),
+             "status": items[-1].get("status")} if items
+            else {"source": "upload"} if r["id"] in uploaded_bank
+            else None
+        )
         if r.get("loan_amount") is not None:
             r["loan_amount"] = float(r["loan_amount"])
         # A boolean for the list, not the credential itself: the table needs to
@@ -3040,7 +3431,10 @@ def _email_docs_reminder(sid: int, to_email: str, business_name: str,
     link = url_for("resume_application", token=token, _external=True)
 
     labels = {
-        "bank_statement": "4 months of business bank statements (PDF)",
+        "bank_statement": ("4 months of business bank statements (PDF) — or connect "
+                           "your bank securely through the link below and we'll fetch them"
+                           if PLAID_ENABLED else
+                           "4 months of business bank statements (PDF)"),
         "voided_check": "Voided check",
         "id_doc": "Driver's license / government-issued ID",
     }
@@ -3140,6 +3534,11 @@ def api_remind_docs(sid: int):
         return jsonify({"error": "No valid email — provide one in the override field."}), 400
 
     uploaded = _get_uploaded_doc_types(sid)
+    # A Plaid Asset Report stands in for statements from a bank that can't
+    # produce statement PDFs; asking that applicant for PDFs anyway would be
+    # asking for something they have already given.
+    if "asset_report" in uploaded:
+        uploaded.add("bank_statement")
     all_types = ["bank_statement", "voided_check", "id_doc"]
     missing = [d for d in all_types if d not in uploaded]
 
@@ -3190,6 +3589,7 @@ def api_submission_detail(sid: int):
             f["url"] = ""
 
     app_row["files"] = files
+    app_row["plaid_items"] = _plaid_items_for([sid]).get(sid, [])
     # Read before the view is recorded, so the modal never opens on its own
     # footprint -- this visit shows up the next time someone looks.
     app_row["events"] = fetch_application_events(sid)
