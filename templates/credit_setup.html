@@ -165,6 +165,15 @@
       box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.18);
     }
 
+    .docs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .docs-grid .uploader { padding: 14px; }
+    .docs-grid label { color: #fde68a; }
+    .docs-note { margin: 0 0 14px; font-size: 13px; }
+    .docs-note.ok { color: #34d399; }
+    .docs-note.bad { color: #fca5a5; }
+    .bank-pill { margin-top: 12px; }
+    @media (max-width: 600px) { .docs-grid { grid-template-columns: 1fr; } }
+
     .form-actions {
       display: flex;
       gap: 12px;
@@ -233,14 +242,22 @@
 <body>
   <main class="credit-shell">
     <header class="credit-header">
-      <span class="credit-eyebrow">Pathway Catalyst · Credit Setup</span>
+      <span class="credit-eyebrow">Pathway Catalyst · {% if after_bank %}Documents &amp; Credit{% else %}Credit Setup{% endif %}</span>
       <h1 class="credit-title">
-        {% if is_done %}All set — thanks for completing this!{% else %}Let's finish your credit setup{% endif %}
+        {% if is_done %}All set — thanks for completing this!{% elif after_bank %}Your bank is connected — just a few more things{% else %}Let's finish your credit setup{% endif %}
       </h1>
       {% if not is_done %}
       <p class="credit-subtitle">
         {% if business %}For <strong>{{ business }}</strong> · {% endif %}This takes about 2 minutes.
       </p>
+      {% if after_bank %}
+      <div class="bank-pill">
+        <span class="credit-pill">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          Bank statements received
+        </span>
+      </div>
+      {% endif %}
       {% endif %}
     </header>
 
@@ -265,9 +282,44 @@
       <div class="credit-card-body">
         <div class="step-stack">
 
-          <!-- Step 1: IDIQ signup -->
+          {% set n = 1 if after_bank else 0 %}
+          {% if after_bank %}
+          <!-- Step 1 (after Plaid only): driver's license + voided check -->
           <div class="step-block">
             <div class="step-marker">1</div>
+            <h3>Upload your driver's license and a voided check</h3>
+            <p>
+              Funders ask for both before contracts. Upload them now, or skip and send them later —
+              you can come back to this page with the same link.
+            </p>
+            {% if docs_result == 'saved' %}<p class="docs-note ok">Thanks — your documents were uploaded.</p>{% endif %}
+            {% if docs_result == 'failed' %}<p class="docs-note bad">Some files didn't upload. Please try them again.</p>{% endif %}
+            <form class="creds-form" action="{{ url_for('credit_setup_documents') }}" method="POST" enctype="multipart/form-data">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+              <div class="docs-grid">
+                <div class="field">
+                  <label>Driver's License{% if 'id_doc' in docs_on_file %} · <span style="color:#34d399;">on file</span>{% endif %}</label>
+                  <div class="uploader">
+                    <input type="file" name="id_doc" accept="application/pdf,image/*" />
+                  </div>
+                </div>
+                <div class="field">
+                  <label>Voided Check{% if 'voided_check' in docs_on_file %} · <span style="color:#34d399;">on file</span>{% endif %}</label>
+                  <div class="uploader">
+                    <input type="file" name="voided_check" accept="application/pdf,image/*" />
+                  </div>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn-credit">Upload</button>
+              </div>
+            </form>
+          </div>
+          {% endif %}
+
+          <!-- Step: IDIQ signup -->
+          <div class="step-block">
+            <div class="step-marker">{{ n + 1 }}</div>
             <h3>Create your IDIQ account</h3>
             <p>
               We run a <strong style="color:#fde68a;">soft credit pull</strong> through IDIQ — it won't affect your score
@@ -281,9 +333,9 @@
             </a>
           </div>
 
-          <!-- Step 2: credentials capture -->
+          <!-- Step: credentials capture -->
           <div class="step-block">
-            <div class="step-marker">2</div>
+            <div class="step-marker">{{ n + 2 }}</div>
             <h3>Share your IDIQ login</h3>
             <p>
               Once your account is created, enter the username and password here. We encrypt the password before storing it —
