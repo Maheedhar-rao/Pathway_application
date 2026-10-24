@@ -260,6 +260,38 @@ def verify_resume_token(token: str) -> tuple[Optional[int], str]:
     sid = data.get("sid") if isinstance(data, dict) else None
     return (int(sid) if sid else None), ("ok" if sid else "invalid")
 
+# ── After-Plaid tokens ───────────────────────────────────────────────────────
+# Underwriters' Paradise sends a lead's owner a Plaid link. When they finish,
+# Plaid sends them to /bank-connected with a token Paradise signed for the
+# lead's application id, and they land on credit setup with the documents step
+# shown: driver's license, voided check, then IDIQ — the same steps 5-7 of the
+# application, minus bank statements, which Plaid just supplied.
+#
+# Signed with PLAID_NEXT_SECRET, set to the same value in both apps — not
+# APP_SECRET, so Paradise never holds this app's session key. Unset, every
+# token is rejected and the merchant gets the link-lost page.
+PLAID_NEXT_MAX_AGE_SECONDS = 30 * 86400  # 30 days, like resume links
+
+
+def _plaid_next_serializer() -> Optional[URLSafeTimedSerializer]:
+    secret = os.environ.get("PLAID_NEXT_SECRET", "").strip()
+    return URLSafeTimedSerializer(secret, salt="plaid-next-v1") if secret else None
+
+
+def verify_plaid_next_token(token: str) -> tuple[Optional[int], str]:
+    """Return (sid, status). status is one of: 'ok', 'expired', 'invalid'."""
+    serializer = _plaid_next_serializer()
+    if not token or serializer is None:
+        return None, "invalid"
+    try:
+        data = serializer.loads(token, max_age=PLAID_NEXT_MAX_AGE_SECONDS)
+    except SignatureExpired:
+        return None, "expired"
+    except BadSignature:
+        return None, "invalid"
+    sid = data.get("sid") if isinstance(data, dict) else None
+    return (int(sid) if sid else None), ("ok" if sid else "invalid")
+
 # ---- Client Branding --------------------------------------------------------
 # Brands are the entry points reps hand to merchants. Each one renders a link
 # two ways, and both keep resolving forever:
@@ -898,6 +930,50 @@ def _submission_record_rows(sid: int) -> tuple[list, dict]:
     return rows, ctx
 
 
+def _signature_flowables(sig_data: str, label: str, label_style) -> list:
+    """Signature image sitting on its own signature line.
+
+    The pad saves light strokes (drawn for its dark background) on a transparent
+    canvas that's mostly empty space, so crop to the ink, re-ink it dark, and
+    size it by its real aspect ratio before drawing the line right under it.
+    """
+    if not sig_data or not sig_data.startswith("data:image/png;base64,"):
+        return []
+    try:
+        from PIL import Image as PILImage
+        pad = PILImage.open(BytesIO(base64.b64decode(sig_data.split(",", 1)[1]))).convert("RGBA")
+        alpha = pad.getchannel("A")
+        bbox = alpha.getbbox()
+        if not bbox:
+            return []
+        margin = 6
+        bbox = (max(bbox[0] - margin, 0), max(bbox[1] - margin, 0),
+                min(bbox[2] + margin, pad.width), min(bbox[3] + margin, pad.height))
+        alpha = alpha.crop(bbox)
+        ink = PILImage.new("RGBA", alpha.size, (15, 23, 42, 255))
+        ink.putalpha(alpha)
+        buf = BytesIO()
+        ink.save(buf, format="PNG")
+        buf.seek(0)
+    except Exception:
+        logging.exception("Could not process signature image")
+        return []
+
+    max_w, max_h = 3.2 * inch, 1.1 * inch
+    scale = min(max_w / alpha.width, max_h / alpha.height)
+    width, height = alpha.width * scale, alpha.height * scale
+    img = Image(buf, width=width, height=height)
+    img.hAlign = "LEFT"
+    line_w = max(width, 2.8 * inch)
+    return [
+        Spacer(1, 8),
+        img,
+        HRFlowable(width=line_w, thickness=0.5, color=BRAND_DARK,
+                   hAlign="LEFT", spaceBefore=0, spaceAfter=4),
+        Paragraph(label, label_style),
+    ]
+
+
 def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str = None) -> BytesIO:
     """Generate a professionally styled PDF summary of the application."""
     if not PDF_ENABLED:
@@ -1078,18 +1154,10 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
     elements.append(_styled_section_table(sig_info))
 
     # Render hand signature image
-    sig_data = form_data.get("signature_data", "")
-    if sig_data and sig_data.startswith("data:image/png;base64,"):
-        raw = base64.b64decode(sig_data.split(",", 1)[1])
-        sig_buf = BytesIO(raw)
-        sig_img = Image(sig_buf, width=3.2*inch, height=1.2*inch)
-        sig_img.hAlign = 'LEFT'
-        elements.append(Spacer(1, 8))
-        elements.append(sig_img)
-        elements.append(HRFlowable(width="50%", thickness=0.5, color=BRAND_DARK, spaceAfter=4))
-        elements.append(Paragraph("Applicant Signature", ParagraphStyle(
-            'SigLabel', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY
-        )))
+    elements.extend(_signature_flowables(
+        form_data.get("signature_data", ""), "Applicant Signature",
+        ParagraphStyle('SigLabel', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY),
+    ))
 
     # Second-owner signature block (only if a second owner was added)
     if (form_data.get("has_owner_1") or "No").strip() == "Yes":
@@ -1100,18 +1168,10 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
         ]
         elements.append(_styled_section_table(owner1_sig_info))
 
-        owner1_sig_data = form_data.get("owner_1_signature_data", "")
-        if owner1_sig_data and owner1_sig_data.startswith("data:image/png;base64,"):
-            raw1 = base64.b64decode(owner1_sig_data.split(",", 1)[1])
-            sig_buf1 = BytesIO(raw1)
-            sig_img1 = Image(sig_buf1, width=3.2*inch, height=1.2*inch)
-            sig_img1.hAlign = 'LEFT'
-            elements.append(Spacer(1, 8))
-            elements.append(sig_img1)
-            elements.append(HRFlowable(width="50%", thickness=0.5, color=BRAND_DARK, spaceAfter=4))
-            elements.append(Paragraph("Second Owner Signature", ParagraphStyle(
-                'SigLabel2', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY
-            )))
+        elements.extend(_signature_flowables(
+            form_data.get("owner_1_signature_data", ""), "Second Owner Signature",
+            ParagraphStyle('SigLabel2', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY),
+        ))
 
     # ── Submission record ──
     # Never allowed to cost the document: any failure here drops the page and
@@ -1169,6 +1229,49 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
     doc.build(elements)
     buffer.seek(0)
     return buffer
+
+
+# The signed application, exactly as the merchant signed it, kept in storage.
+# Until this existed the PDF above only went out by email and no copy of the
+# signed document was held anywhere. It is a record: lenders are sent CROC's own
+# rebuild, which carries the real contact details this copy masks.
+#
+# Deliberately outside the {sid}/ folder: CROC reads any file under {sid}/ as a
+# possible bank statement and any {sid}/ folder as "this lead has statements".
+SIGNED_APPLICATION_PREFIX = "signed-applications"
+
+
+def signed_application_path(sid: int) -> str:
+    return f"{SIGNED_APPLICATION_PREFIX}/{int(sid)}.pdf"
+
+
+def store_application_pdf(sid: int, pdf_bytes: Optional[bytes] = None) -> bool:
+    """Save the application PDF for *sid* to storage, overwriting any earlier copy.
+
+    Pass the bytes when the caller already built them; otherwise the PDF is
+    regenerated from the stored payload, which is how a later step (documents,
+    credit setup) gets onto the submission record page. Best-effort: never
+    raises, because a failed archive must not cost the merchant their submit.
+    """
+    if not PDF_ENABLED:
+        return False
+    try:
+        if pdf_bytes is None:
+            rows = sb.table("applications").select(
+                "id, payload, rep_name").eq("id", sid).limit(1).execute().data or []
+            if not rows:
+                return False
+            buf = generate_application_pdf(rows[0].get("payload") or {}, sid,
+                                           rows[0].get("rep_name"))
+            if buf is None:
+                return False
+            buf.seek(0)
+            pdf_bytes = buf.read()
+        _upload_to_storage(pdf_bytes, signed_application_path(sid))
+        return True
+    except Exception as exc:
+        log.error("Could not store application PDF for %s: %s", sid, exc)
+        return False
 
 
 def _build_email_content(business_name, submission_id, rep_name, attached_files,
@@ -2345,6 +2448,7 @@ def submit_application():
             if pdf_buffer:
                 pdf_buffer.seek(0)
                 pdf_bytes = pdf_buffer.read()
+                store_application_pdf(submission_id, pdf_bytes)
                 recipients = _internal_recipients()
 
                 def _bg_send_team(recips, biz, sid, rname):
@@ -2406,6 +2510,9 @@ def upload_documents(sid):
         log_event("documents_uploaded", application_id=sid,
                   payload={"types": _saved_types, "files": len(saved_paths),
                            "failed": len(_failed)})
+    if saved_paths:
+        # Put this upload onto the stored copy's submission record.
+        store_application_pdf(sid)
 
     if saved_paths:
         try:
@@ -2645,6 +2752,7 @@ def submit():
                 # on buffer position.
                 pdf_buffer.seek(0)
                 pdf_bytes = pdf_buffer.read()
+                store_application_pdf(submission_id, pdf_bytes)
 
                 recipients = _internal_recipients()
 
@@ -2716,6 +2824,13 @@ def submit():
 # the dashboard, applicants can self-serve from the expired-link page.
 
 SESSION_RESUME_KEY = "resume_sid"
+# Set alongside SESSION_RESUME_KEY when the merchant arrived from Plaid; it holds
+# the same sid, so the documents step only shows for that application.
+SESSION_AFTER_BANK_KEY = "after_bank_sid"
+
+# What the documents step asks for after Plaid. Bank statements are left out on
+# purpose: Plaid has just supplied them.
+AFTER_BANK_DOC_TYPES = ("id_doc", "voided_check")
 
 
 def _email_resume_link(sid: int, to_email: str, business_name: str = "",
@@ -2824,6 +2939,56 @@ def resume_application():
     ), 410 if status == "expired" else 404
 
 
+@app.route("/bank-connected")
+def bank_connected():
+    """Where Plaid sends a merchant who finished a Paradise Plaid link."""
+    sid, status = verify_plaid_next_token(request.args.get("t", ""))
+    if status == "ok" and sid:
+        session[SESSION_RESUME_KEY] = sid
+        session[SESSION_AFTER_BANK_KEY] = sid
+        log_event("bank_connected_opened", application_id=sid)
+        return redirect(url_for("credit_setup"))
+    log_event("bank_connected_rejected", payload={"reason": status})
+    return render_template(
+        "credit_link_expired.html",
+        expired=(status == "expired"),
+        idiq_signup_url=IDIQ_SIGNUP_URL,
+    ), 410 if status == "expired" else 404
+
+
+def _docs_on_file(sid: int) -> List[str]:
+    """Which of the after-bank documents this application already has."""
+    try:
+        rows = (sb.table("application_files").select("doc_type")
+                  .eq("application_id", sid).in_("doc_type", list(AFTER_BANK_DOC_TYPES))
+                  .execute().data) or []
+    except Exception as exc:
+        log.warning("application_files unreadable for %s: %s", sid, exc)
+        return []
+    return sorted({r.get("doc_type") for r in rows if r.get("doc_type")})
+
+
+@app.route("/credit-setup/documents", methods=["POST"])
+def credit_setup_documents():
+    sid = session.get(SESSION_RESUME_KEY)
+    if not sid or session.get(SESSION_AFTER_BANK_KEY) != sid:
+        abort(403)
+
+    saved: List[str] = []
+    attached_paths: List[str] = []
+    failed: List[str] = []
+    for dtype in AFTER_BANK_DOC_TYPES:
+        f = request.files.get(dtype)
+        if f and f.filename and _store_uploaded_file(sid, f, dtype, attached_paths, failed):
+            saved.append(dtype)
+    if saved or failed:
+        log_event("documents_uploaded", application_id=sid,
+                  payload={"types": saved, "files": len(attached_paths),
+                           "failed": len(failed), "page": "credit_setup"})
+    _queue_docs_email(sid, attached_paths)
+    return redirect(url_for("credit_setup", docs="failed" if failed else ("saved" if saved else "none")))
+
+
 @app.route("/credit-setup", methods=["GET"])
 def credit_setup():
     sid = session.get(SESSION_RESUME_KEY)
@@ -2840,21 +3005,30 @@ def credit_setup():
         return redirect(url_for("credit_setup_link_lost"))
 
     row = rows[0]
+    after_bank = session.get(SESSION_AFTER_BANK_KEY) == sid
     log_event("credit_setup_viewed", application_id=sid,
-              payload={"idiq_saved": bool(row.get("idiq_username"))})
+              payload={"idiq_saved": bool(row.get("idiq_username")),
+                       "after_bank": after_bank})
     # The missing-docs reminder lands here, so this page is also where a bank
     # can be connected after the fact. Offered only while nothing covering the
-    # bank is on file -- statements, an Asset Report, or a connection in flight.
-    bank_on_file = bool(_get_uploaded_doc_types(sid) & {"bank_statement", "asset_report"}) \
-        or bool(_plaid_items_for([sid]).get(sid))
+    # bank is on file -- statements, an Asset Report, or a connection in flight
+    # -- and never to someone who just came from Paradise's Plaid link
+    # (after_bank): they have connected, even though those statements are
+    # filed on Paradise's side and not in this app's tables.
+    offer_plaid = PLAID_ENABLED and not after_bank and not (
+        (_get_uploaded_doc_types(sid) & {"bank_statement", "asset_report"})
+        or _plaid_items_for([sid]).get(sid))
     return render_template(
         "credit_setup.html",
         sid=sid,
         business=row.get("business_legal_name"),
         idiq_signup_url=IDIQ_SIGNUP_URL,
         idiq_already_saved=bool(row.get("idiq_username")),
-        offer_plaid=PLAID_ENABLED and not bank_on_file,
+        offer_plaid=offer_plaid,
         is_done=(request.args.get("done") == "1"),
+        after_bank=after_bank,
+        docs_on_file=_docs_on_file(sid) if after_bank else [],
+        docs_result=request.args.get("docs"),
     )
 
 
@@ -2885,6 +3059,7 @@ def credit_setup_credentials():
     log_event("idiq_credentials_saved", application_id=sid,
               payload={"has_username": bool(username), "has_password": bool(password),
                        "page": "credit_setup"})
+    store_application_pdf(sid)
     return redirect(url_for("credit_setup", done="1"))
 
 
@@ -2956,7 +3131,45 @@ def idiq_credentials():
     log_event("idiq_credentials_saved", application_id=sid,
               payload={"has_username": bool(username), "has_password": bool(password),
                        "page": "thank_you"})
+    store_application_pdf(sid)
     return redirect(url_for("thank_you", sid=sid, done="1"))
+
+
+def _queue_docs_email(sid: int, attached_paths: List[str]) -> None:
+    """Email newly uploaded documents to the internal inboxes, off the request."""
+    if not attached_paths:
+        return
+    try:
+        app_res = sb.table("applications").select(
+            "business_legal_name, rep_name"
+        ).eq("id", sid).execute()
+        row = (app_res.data or [{}])[0]
+        business_name = row.get("business_legal_name") or ""
+        rep_name = row.get("rep_name")
+
+        recipients = _internal_recipients()
+
+        def _bg_send_docs(recips, biz, sid_, rname, files):
+            try:
+                ok = send_email_with_pdf(
+                    to_emails=recips, business_name=biz,
+                    pdf_buffer=None, submission_id=sid_,
+                    rep_name=rname, attached_files=files,
+                    email_type="docs_update",
+                )
+                if ok:
+                    _mark_email_sent(sid_, "docs_email_sent_at")
+            except Exception as exc:
+                log.error("Background docs email failed for %s: %s", sid_, exc)
+
+        threading.Thread(
+            target=_bg_send_docs,
+            args=(recipients, business_name, sid, rep_name, attached_paths),
+            daemon=True,
+        ).start()
+        log.info("Docs email queued for submission %s → %s", sid, recipients)
+    except Exception as e:
+        log.error("Failed to queue docs email for %s: %s", sid, e)
 
 
 @app.route("/upload-docs", methods=["POST"])
@@ -2970,40 +3183,11 @@ def upload_docs():
         log_event("documents_uploaded", application_id=sid,
                   payload={"types": saved, "files": len(attached_paths),
                            "failed": len(failed)})
+    if attached_paths:
+        store_application_pdf(sid)
 
     # Email uploaded documents to the internal inboxes (in background)
-    if attached_paths:
-        try:
-            app_res = sb.table("applications").select(
-                "business_legal_name, rep_name"
-            ).eq("id", sid).execute()
-            row = (app_res.data or [{}])[0]
-            business_name = row.get("business_legal_name") or ""
-            rep_name = row.get("rep_name")
-
-            recipients = _internal_recipients()
-
-            def _bg_send_docs(recips, biz, sid_, rname, files):
-                try:
-                    ok = send_email_with_pdf(
-                        to_emails=recips, business_name=biz,
-                        pdf_buffer=None, submission_id=sid_,
-                        rep_name=rname, attached_files=files,
-                        email_type="docs_update",
-                    )
-                    if ok:
-                        _mark_email_sent(sid_, "docs_email_sent_at")
-                except Exception as exc:
-                    log.error("Background docs email failed for %s: %s", sid_, exc)
-
-            threading.Thread(
-                target=_bg_send_docs,
-                args=(recipients, business_name, sid, rep_name, attached_paths),
-                daemon=True,
-            ).start()
-            log.info("Docs email queued for submission %s → %s", sid, recipients)
-        except Exception as e:
-            log.error("Failed to queue docs email for %s: %s", sid, e)
+    _queue_docs_email(sid, attached_paths)
 
     return render_template("thank_you.html", sid=sid, uploaded=saved, failed=failed)
 
@@ -3275,21 +3459,7 @@ def _plaid_collect(sid: int, plaid_item_row: int, access_token: str) -> None:
               payload={"source": "plaid", "status": status,
                        "statements": statements_count, "asset_report": asset_ready})
 
-    if paths:
-        try:
-            row = (sb.table("applications").select("business_legal_name, rep_name")
-                   .eq("id", sid).execute().data or [{}])[0]
-            ok = send_email_with_pdf(
-                to_emails=_internal_recipients(),
-                business_name=row.get("business_legal_name") or "",
-                pdf_buffer=None, submission_id=sid,
-                rep_name=row.get("rep_name"), attached_files=paths,
-                email_type="docs_update",
-            )
-            if ok:
-                _mark_email_sent(sid, "docs_email_sent_at")
-        except Exception as exc:
-            log.error("Plaid docs email failed for %s: %s", sid, exc)
+    _queue_docs_email(sid, paths)
 
 
 def _plaid_items_for(app_ids: list) -> dict:
