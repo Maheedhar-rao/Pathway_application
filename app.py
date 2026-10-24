@@ -208,6 +208,38 @@ def verify_resume_token(token: str) -> tuple[Optional[int], str]:
     sid = data.get("sid") if isinstance(data, dict) else None
     return (int(sid) if sid else None), ("ok" if sid else "invalid")
 
+# ── After-Plaid tokens ───────────────────────────────────────────────────────
+# Underwriters' Paradise sends a lead's owner a Plaid link. When they finish,
+# Plaid sends them to /bank-connected with a token Paradise signed for the
+# lead's application id, and they land on credit setup with the documents step
+# shown: driver's license, voided check, then IDIQ — the same steps 5-7 of the
+# application, minus bank statements, which Plaid just supplied.
+#
+# Signed with PLAID_NEXT_SECRET, set to the same value in both apps — not
+# APP_SECRET, so Paradise never holds this app's session key. Unset, every
+# token is rejected and the merchant gets the link-lost page.
+PLAID_NEXT_MAX_AGE_SECONDS = 30 * 86400  # 30 days, like resume links
+
+
+def _plaid_next_serializer() -> Optional[URLSafeTimedSerializer]:
+    secret = os.environ.get("PLAID_NEXT_SECRET", "").strip()
+    return URLSafeTimedSerializer(secret, salt="plaid-next-v1") if secret else None
+
+
+def verify_plaid_next_token(token: str) -> tuple[Optional[int], str]:
+    """Return (sid, status). status is one of: 'ok', 'expired', 'invalid'."""
+    serializer = _plaid_next_serializer()
+    if not token or serializer is None:
+        return None, "invalid"
+    try:
+        data = serializer.loads(token, max_age=PLAID_NEXT_MAX_AGE_SECONDS)
+    except SignatureExpired:
+        return None, "expired"
+    except BadSignature:
+        return None, "invalid"
+    sid = data.get("sid") if isinstance(data, dict) else None
+    return (int(sid) if sid else None), ("ok" if sid else "invalid")
+
 # ---- Client Branding --------------------------------------------------------
 # Brands are the entry points reps hand to merchants. Each one renders a link
 # two ways, and both keep resolving forever:
@@ -2733,6 +2765,13 @@ def submit():
 # the dashboard, applicants can self-serve from the expired-link page.
 
 SESSION_RESUME_KEY = "resume_sid"
+# Set alongside SESSION_RESUME_KEY when the merchant arrived from Plaid; it holds
+# the same sid, so the documents step only shows for that application.
+SESSION_AFTER_BANK_KEY = "after_bank_sid"
+
+# What the documents step asks for after Plaid. Bank statements are left out on
+# purpose: Plaid has just supplied them.
+AFTER_BANK_DOC_TYPES = ("id_doc", "voided_check")
 
 
 def _email_resume_link(sid: int, to_email: str, business_name: str = "",
@@ -2841,6 +2880,56 @@ def resume_application():
     ), 410 if status == "expired" else 404
 
 
+@app.route("/bank-connected")
+def bank_connected():
+    """Where Plaid sends a merchant who finished a Paradise Plaid link."""
+    sid, status = verify_plaid_next_token(request.args.get("t", ""))
+    if status == "ok" and sid:
+        session[SESSION_RESUME_KEY] = sid
+        session[SESSION_AFTER_BANK_KEY] = sid
+        log_event("bank_connected_opened", application_id=sid)
+        return redirect(url_for("credit_setup"))
+    log_event("bank_connected_rejected", payload={"reason": status})
+    return render_template(
+        "credit_link_expired.html",
+        expired=(status == "expired"),
+        idiq_signup_url=IDIQ_SIGNUP_URL,
+    ), 410 if status == "expired" else 404
+
+
+def _docs_on_file(sid: int) -> List[str]:
+    """Which of the after-bank documents this application already has."""
+    try:
+        rows = (sb.table("application_files").select("doc_type")
+                  .eq("application_id", sid).in_("doc_type", list(AFTER_BANK_DOC_TYPES))
+                  .execute().data) or []
+    except Exception as exc:
+        log.warning("application_files unreadable for %s: %s", sid, exc)
+        return []
+    return sorted({r.get("doc_type") for r in rows if r.get("doc_type")})
+
+
+@app.route("/credit-setup/documents", methods=["POST"])
+def credit_setup_documents():
+    sid = session.get(SESSION_RESUME_KEY)
+    if not sid or session.get(SESSION_AFTER_BANK_KEY) != sid:
+        abort(403)
+
+    saved: List[str] = []
+    attached_paths: List[str] = []
+    failed: List[str] = []
+    for dtype in AFTER_BANK_DOC_TYPES:
+        f = request.files.get(dtype)
+        if f and f.filename and _store_uploaded_file(sid, f, dtype, attached_paths, failed):
+            saved.append(dtype)
+    if saved or failed:
+        log_event("documents_uploaded", application_id=sid,
+                  payload={"types": saved, "files": len(attached_paths),
+                           "failed": len(failed), "page": "credit_setup"})
+    _queue_docs_email(sid, attached_paths)
+    return redirect(url_for("credit_setup", docs="failed" if failed else ("saved" if saved else "none")))
+
+
 @app.route("/credit-setup", methods=["GET"])
 def credit_setup():
     sid = session.get(SESSION_RESUME_KEY)
@@ -2857,8 +2946,10 @@ def credit_setup():
         return redirect(url_for("credit_setup_link_lost"))
 
     row = rows[0]
+    after_bank = session.get(SESSION_AFTER_BANK_KEY) == sid
     log_event("credit_setup_viewed", application_id=sid,
-              payload={"idiq_saved": bool(row.get("idiq_username"))})
+              payload={"idiq_saved": bool(row.get("idiq_username")),
+                       "after_bank": after_bank})
     return render_template(
         "credit_setup.html",
         sid=sid,
@@ -2866,6 +2957,9 @@ def credit_setup():
         idiq_signup_url=IDIQ_SIGNUP_URL,
         idiq_already_saved=bool(row.get("idiq_username")),
         is_done=(request.args.get("done") == "1"),
+        after_bank=after_bank,
+        docs_on_file=_docs_on_file(sid) if after_bank else [],
+        docs_result=request.args.get("docs"),
     )
 
 
@@ -2972,6 +3066,43 @@ def idiq_credentials():
     return redirect(url_for("thank_you", sid=sid, done="1"))
 
 
+def _queue_docs_email(sid: int, attached_paths: List[str]) -> None:
+    """Email newly uploaded documents to the internal inboxes, off the request."""
+    if not attached_paths:
+        return
+    try:
+        app_res = sb.table("applications").select(
+            "business_legal_name, rep_name"
+        ).eq("id", sid).execute()
+        row = (app_res.data or [{}])[0]
+        business_name = row.get("business_legal_name") or ""
+        rep_name = row.get("rep_name")
+
+        recipients = _internal_recipients()
+
+        def _bg_send_docs(recips, biz, sid_, rname, files):
+            try:
+                ok = send_email_with_pdf(
+                    to_emails=recips, business_name=biz,
+                    pdf_buffer=None, submission_id=sid_,
+                    rep_name=rname, attached_files=files,
+                    email_type="docs_update",
+                )
+                if ok:
+                    _mark_email_sent(sid_, "docs_email_sent_at")
+            except Exception as exc:
+                log.error("Background docs email failed for %s: %s", sid_, exc)
+
+        threading.Thread(
+            target=_bg_send_docs,
+            args=(recipients, business_name, sid, rep_name, attached_paths),
+            daemon=True,
+        ).start()
+        log.info("Docs email queued for submission %s → %s", sid, recipients)
+    except Exception as e:
+        log.error("Failed to queue docs email for %s: %s", sid, e)
+
+
 @app.route("/upload-docs", methods=["POST"])
 def upload_docs():
     sid = request.form.get("sid", type=int)
@@ -2987,38 +3118,7 @@ def upload_docs():
         store_application_pdf(sid)
 
     # Email uploaded documents to the internal inboxes (in background)
-    if attached_paths:
-        try:
-            app_res = sb.table("applications").select(
-                "business_legal_name, rep_name"
-            ).eq("id", sid).execute()
-            row = (app_res.data or [{}])[0]
-            business_name = row.get("business_legal_name") or ""
-            rep_name = row.get("rep_name")
-
-            recipients = _internal_recipients()
-
-            def _bg_send_docs(recips, biz, sid_, rname, files):
-                try:
-                    ok = send_email_with_pdf(
-                        to_emails=recips, business_name=biz,
-                        pdf_buffer=None, submission_id=sid_,
-                        rep_name=rname, attached_files=files,
-                        email_type="docs_update",
-                    )
-                    if ok:
-                        _mark_email_sent(sid_, "docs_email_sent_at")
-                except Exception as exc:
-                    log.error("Background docs email failed for %s: %s", sid_, exc)
-
-            threading.Thread(
-                target=_bg_send_docs,
-                args=(recipients, business_name, sid, rep_name, attached_paths),
-                daemon=True,
-            ).start()
-            log.info("Docs email queued for submission %s → %s", sid, recipients)
-        except Exception as e:
-            log.error("Failed to queue docs email for %s: %s", sid, e)
+    _queue_docs_email(sid, attached_paths)
 
     return render_template("thank_you.html", sid=sid, uploaded=saved, failed=failed)
 
