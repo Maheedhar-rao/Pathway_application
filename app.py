@@ -846,6 +846,50 @@ def _submission_record_rows(sid: int) -> tuple[list, dict]:
     return rows, ctx
 
 
+def _signature_flowables(sig_data: str, label: str, label_style) -> list:
+    """Signature image sitting on its own signature line.
+
+    The pad saves light strokes (drawn for its dark background) on a transparent
+    canvas that's mostly empty space, so crop to the ink, re-ink it dark, and
+    size it by its real aspect ratio before drawing the line right under it.
+    """
+    if not sig_data or not sig_data.startswith("data:image/png;base64,"):
+        return []
+    try:
+        from PIL import Image as PILImage
+        pad = PILImage.open(BytesIO(base64.b64decode(sig_data.split(",", 1)[1]))).convert("RGBA")
+        alpha = pad.getchannel("A")
+        bbox = alpha.getbbox()
+        if not bbox:
+            return []
+        margin = 6
+        bbox = (max(bbox[0] - margin, 0), max(bbox[1] - margin, 0),
+                min(bbox[2] + margin, pad.width), min(bbox[3] + margin, pad.height))
+        alpha = alpha.crop(bbox)
+        ink = PILImage.new("RGBA", alpha.size, (15, 23, 42, 255))
+        ink.putalpha(alpha)
+        buf = BytesIO()
+        ink.save(buf, format="PNG")
+        buf.seek(0)
+    except Exception:
+        logging.exception("Could not process signature image")
+        return []
+
+    max_w, max_h = 3.2 * inch, 1.1 * inch
+    scale = min(max_w / alpha.width, max_h / alpha.height)
+    width, height = alpha.width * scale, alpha.height * scale
+    img = Image(buf, width=width, height=height)
+    img.hAlign = "LEFT"
+    line_w = max(width, 2.8 * inch)
+    return [
+        Spacer(1, 8),
+        img,
+        HRFlowable(width=line_w, thickness=0.5, color=BRAND_DARK,
+                   hAlign="LEFT", spaceBefore=0, spaceAfter=4),
+        Paragraph(label, label_style),
+    ]
+
+
 def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str = None) -> BytesIO:
     """Generate a professionally styled PDF summary of the application."""
     if not PDF_ENABLED:
@@ -1026,18 +1070,10 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
     elements.append(_styled_section_table(sig_info))
 
     # Render hand signature image
-    sig_data = form_data.get("signature_data", "")
-    if sig_data and sig_data.startswith("data:image/png;base64,"):
-        raw = base64.b64decode(sig_data.split(",", 1)[1])
-        sig_buf = BytesIO(raw)
-        sig_img = Image(sig_buf, width=3.2*inch, height=1.2*inch)
-        sig_img.hAlign = 'LEFT'
-        elements.append(Spacer(1, 8))
-        elements.append(sig_img)
-        elements.append(HRFlowable(width="50%", thickness=0.5, color=BRAND_DARK, spaceAfter=4))
-        elements.append(Paragraph("Applicant Signature", ParagraphStyle(
-            'SigLabel', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY
-        )))
+    elements.extend(_signature_flowables(
+        form_data.get("signature_data", ""), "Applicant Signature",
+        ParagraphStyle('SigLabel', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY),
+    ))
 
     # Second-owner signature block (only if a second owner was added)
     if (form_data.get("has_owner_1") or "No").strip() == "Yes":
@@ -1048,18 +1084,10 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
         ]
         elements.append(_styled_section_table(owner1_sig_info))
 
-        owner1_sig_data = form_data.get("owner_1_signature_data", "")
-        if owner1_sig_data and owner1_sig_data.startswith("data:image/png;base64,"):
-            raw1 = base64.b64decode(owner1_sig_data.split(",", 1)[1])
-            sig_buf1 = BytesIO(raw1)
-            sig_img1 = Image(sig_buf1, width=3.2*inch, height=1.2*inch)
-            sig_img1.hAlign = 'LEFT'
-            elements.append(Spacer(1, 8))
-            elements.append(sig_img1)
-            elements.append(HRFlowable(width="50%", thickness=0.5, color=BRAND_DARK, spaceAfter=4))
-            elements.append(Paragraph("Second Owner Signature", ParagraphStyle(
-                'SigLabel2', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY
-            )))
+        elements.extend(_signature_flowables(
+            form_data.get("owner_1_signature_data", ""), "Second Owner Signature",
+            ParagraphStyle('SigLabel2', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY),
+        ))
 
     # ── Submission record ──
     # Never allowed to cost the document: any failure here drops the page and
@@ -1117,6 +1145,49 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
     doc.build(elements)
     buffer.seek(0)
     return buffer
+
+
+# The signed application, exactly as the merchant signed it, kept in storage.
+# Until this existed the PDF above only went out by email and no copy of the
+# signed document was held anywhere. It is a record: lenders are sent CROC's own
+# rebuild, which carries the real contact details this copy masks.
+#
+# Deliberately outside the {sid}/ folder: CROC reads any file under {sid}/ as a
+# possible bank statement and any {sid}/ folder as "this lead has statements".
+SIGNED_APPLICATION_PREFIX = "signed-applications"
+
+
+def signed_application_path(sid: int) -> str:
+    return f"{SIGNED_APPLICATION_PREFIX}/{int(sid)}.pdf"
+
+
+def store_application_pdf(sid: int, pdf_bytes: Optional[bytes] = None) -> bool:
+    """Save the application PDF for *sid* to storage, overwriting any earlier copy.
+
+    Pass the bytes when the caller already built them; otherwise the PDF is
+    regenerated from the stored payload, which is how a later step (documents,
+    credit setup) gets onto the submission record page. Best-effort: never
+    raises, because a failed archive must not cost the merchant their submit.
+    """
+    if not PDF_ENABLED:
+        return False
+    try:
+        if pdf_bytes is None:
+            rows = sb.table("applications").select(
+                "id, payload, rep_name").eq("id", sid).limit(1).execute().data or []
+            if not rows:
+                return False
+            buf = generate_application_pdf(rows[0].get("payload") or {}, sid,
+                                           rows[0].get("rep_name"))
+            if buf is None:
+                return False
+            buf.seek(0)
+            pdf_bytes = buf.read()
+        _upload_to_storage(pdf_bytes, signed_application_path(sid))
+        return True
+    except Exception as exc:
+        log.error("Could not store application PDF for %s: %s", sid, exc)
+        return False
 
 
 def _build_email_content(business_name, submission_id, rep_name, attached_files,
@@ -2286,6 +2357,7 @@ def submit_application():
             if pdf_buffer:
                 pdf_buffer.seek(0)
                 pdf_bytes = pdf_buffer.read()
+                store_application_pdf(submission_id, pdf_bytes)
                 recipients = _internal_recipients()
 
                 def _bg_send_team(recips, biz, sid, rname):
@@ -2347,6 +2419,9 @@ def upload_documents(sid):
         log_event("documents_uploaded", application_id=sid,
                   payload={"types": _saved_types, "files": len(saved_paths),
                            "failed": len(_failed)})
+    if saved_paths:
+        # Put this upload onto the stored copy's submission record.
+        store_application_pdf(sid)
 
     if saved_paths:
         try:
@@ -2586,6 +2661,7 @@ def submit():
                 # on buffer position.
                 pdf_buffer.seek(0)
                 pdf_bytes = pdf_buffer.read()
+                store_application_pdf(submission_id, pdf_bytes)
 
                 recipients = _internal_recipients()
 
@@ -2820,6 +2896,7 @@ def credit_setup_credentials():
     log_event("idiq_credentials_saved", application_id=sid,
               payload={"has_username": bool(username), "has_password": bool(password),
                        "page": "credit_setup"})
+    store_application_pdf(sid)
     return redirect(url_for("credit_setup", done="1"))
 
 
@@ -2891,6 +2968,7 @@ def idiq_credentials():
     log_event("idiq_credentials_saved", application_id=sid,
               payload={"has_username": bool(username), "has_password": bool(password),
                        "page": "thank_you"})
+    store_application_pdf(sid)
     return redirect(url_for("thank_you", sid=sid, done="1"))
 
 
@@ -2905,6 +2983,8 @@ def upload_docs():
         log_event("documents_uploaded", application_id=sid,
                   payload={"types": saved, "files": len(attached_paths),
                            "failed": len(failed)})
+    if attached_paths:
+        store_application_pdf(sid)
 
     # Email uploaded documents to the internal inboxes (in background)
     if attached_paths:
