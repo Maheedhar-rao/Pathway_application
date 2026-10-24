@@ -549,6 +549,17 @@
             Attaching these files now speeds up review. You can also skip and email them later.
           </p>
 
+          {% if plaid_enabled %}
+          <div class="plaid-connect" data-plaid-connect data-context="form" data-csrf="{{ csrf_token() }}">
+            <h4>Connect your business bank — fastest</h4>
+            <p>Log in to your bank through Plaid and we'll fetch your last 4 months of statements for you.
+               Read-only and encrypted; we never see your bank password.</p>
+            <button type="button" class="btn primary plaid-btn">Connect your bank</button>
+            <p class="plaid-status" role="status" aria-live="polite"></p>
+          </div>
+          <div class="plaid-or">or upload PDFs</div>
+          {% endif %}
+
           <div class="field" style="margin-bottom:16px;">
             <label>4 Months Business Bank Statements (PDF)</label>
             <div class="uploader" id="bank-uploader" style="padding:16px;">
@@ -589,6 +600,10 @@
   </main>
 
   <script src="{{ url_for('static', filename='form.js') }}"></script>
+  {% if plaid_enabled %}
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <script src="{{ url_for('static', filename='plaid-connect.js') }}"></script>
+  {% endif %}
 
   <script>
     // ── Multi-page navigation ──
