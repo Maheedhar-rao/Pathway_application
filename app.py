@@ -198,6 +198,11 @@ PLAID_BASE_URL = {
 PLAID_STATEMENT_DAYS = 155
 PLAID_ASSET_DAYS = 120
 
+# Not "plaid_items": that name is taken in this Supabase project by Paradise's
+# hosted-link flow (keyed by plaid_requests.request_id), and
+# "create table if not exists" against it silently created nothing.
+PLAID_ITEMS_TABLE = "application_plaid_items"
+
 
 class PlaidError(Exception):
     def __init__(self, code: str, message: str = ""):
@@ -3326,7 +3331,7 @@ def plaid_exchange():
     institution_name = str(inst.get("name") or "")[:120] or None
 
     try:
-        row = sb.table("plaid_items").insert({
+        row = sb.table(PLAID_ITEMS_TABLE).insert({
             "application_id": sid,
             "item_id": item_id,
             "access_token_encrypted": encrypt_idiq_password(access_token),
@@ -3449,7 +3454,7 @@ def _plaid_collect(sid: int, plaid_item_row: int, access_token: str) -> None:
     if institution_name:
         update["institution_name"] = institution_name
     try:
-        sb.table("plaid_items").update(update).eq("id", plaid_item_row).execute()
+        sb.table(PLAID_ITEMS_TABLE).update(update).eq("id", plaid_item_row).execute()
     except Exception as exc:
         log.error("Failed to update Plaid item %s: %s", plaid_item_row, exc)
     if errors:
@@ -3469,12 +3474,12 @@ def _plaid_items_for(app_ids: list) -> dict:
     if not app_ids:
         return {}
     try:
-        res = sb.table("plaid_items").select(
+        res = sb.table(PLAID_ITEMS_TABLE).select(
             "application_id, institution_name, accounts, status, statements_count, "
             "asset_report_ready, last_error, created_at"
         ).in_("application_id", app_ids).order("id").execute()
     except Exception as exc:
-        log.warning("plaid_items lookup failed: %s", exc)
+        log.warning("application_plaid_items lookup failed: %s", exc)
         return {}
     out: dict = {}
     for r in res.data or []:
