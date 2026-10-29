@@ -327,9 +327,10 @@ def _brand_sort_key(b: dict):
 
 def _load_brands_from_db() -> list:
     try:
-        res = sb.table("client_brands").select(
-            "slug, name, domain, active, is_default"
-        ).execute()
+        # "*" rather than a column list: the partner columns arrived in a
+        # later migration, and naming them would fail every brand back to the
+        # built-in one on a deploy that lands before that migration.
+        res = sb.table("client_brands").select("*").execute()
         rows = res.data or []
     except Exception:
         # Never fatal: a missing table would otherwise take down the public
@@ -351,6 +352,9 @@ def _load_brands_from_db() -> list:
             "domain": (r.get("domain") or "").lower().strip() or None,
             "active": bool(r.get("active", True)),
             "is_default": bool(r.get("is_default", False)),
+            "badge": (r.get("badge") or "").strip() or None,
+            "logo": (r.get("logo") or "").strip() or None,
+            "partner_rep": (r.get("partner_rep") or "").strip() or None,
         })
     out.sort(key=_brand_sort_key)
     return out
@@ -432,6 +436,14 @@ def current_brand() -> Optional[dict]:
 def current_brand_name() -> Optional[str]:
     brand = current_brand()
     return brand["name"] if brand else None
+
+def brand_logo_url(brand: Optional[dict]) -> Optional[str]:
+    """Public URL of a partner's logo. The storage path (a fresh uuid per
+    upload) rides along as ?v= so a replaced logo is never served stale."""
+    if not (brand and brand.get("logo")):
+        return None
+    v = hashlib.sha256(brand["logo"].encode()).hexdigest()[:10]
+    return url_for("brand_logo", slug=brand["slug"], v=v)
 
 # ---- Sales Rep Configuration ------------------------------------------------
 # Reps live in the Supabase `sales_reps` table (see migration
@@ -2235,7 +2247,9 @@ def read_rep_param() -> tuple[str, dict]:
     return code, notes
 
 
-def _render_form(client_name=None, brand_slug=None):
+def _render_form(brand=None):
+    client_name = brand["name"] if brand else None
+    brand_slug = brand["slug"] if brand else None
     rep_code, rep_notes = read_rep_param()
     rep_info = get_rep_info(rep_code)
     rep_sig = sign_rep_code(rep_code) if rep_code else ""
@@ -2267,6 +2281,8 @@ def _render_form(client_name=None, brand_slug=None):
         rep_sig=rep_sig,
         idiq_signup_url=IDIQ_SIGNUP_URL,
         client_name=client_name,
+        brand_badge=brand.get("badge") if brand else None,
+        brand_logo_url=brand_logo_url(brand),
         plaid_enabled=PLAID_ENABLED,
     )
 
@@ -2274,9 +2290,7 @@ def _render_form(client_name=None, brand_slug=None):
 def home():
     # On a brand's own domain (application.croccrm.com) the root path is that
     # brand's entry point; on this app's own host it falls back to the default.
-    brand = current_brand()
-    return _render_form(client_name=(brand["name"] if brand else None),
-                        brand_slug=(brand["slug"] if brand else None))
+    return _render_form(current_brand())
 
 @app.route("/<client_slug>")
 def home_client(client_slug):
@@ -2286,7 +2300,7 @@ def home_client(client_slug):
     brand = get_brand_by_slug(client_slug, include_inactive=True)
     if not brand:
         abort(404)
-    return _render_form(client_name=brand["name"], brand_slug=brand["slug"])
+    return _render_form(brand)
 
 @app.route("/favicon.ico")
 def favicon():
@@ -2303,6 +2317,30 @@ def favicon():
     # page load and is rendered at 16 or 32 pixels.
     return send_from_directory(str(APP_DIR / "static"), "favicon.png",
                                mimetype="image/png", max_age=86400)
+
+
+# Partner logos keyed by storage path: a replaced logo gets a new path, so
+# entries never go stale, and the bucket is hit once per logo per worker.
+_logo_cache: dict = {}
+
+@app.route("/brand-logo/<slug>")
+def brand_logo(slug):
+    """A referral partner's logo, proxied from the private storage bucket."""
+    brand = get_brand_by_slug(slug, include_inactive=True)
+    if not (brand and brand.get("logo")):
+        abort(404)
+    path = brand["logo"]
+    if path not in _logo_cache:
+        try:
+            data = _download_from_storage(path)
+        except Exception:
+            log.exception("Logo download failed for brand %s", slug)
+            abort(404)
+        _logo_cache[path] = (data, _sniff_image_type(data) or "application/octet-stream")
+    data, ctype = _logo_cache[path]
+    resp = send_file(BytesIO(data), mimetype=ctype, max_age=86400)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    return resp
 
 
 @app.route("/thank-you")
@@ -4013,7 +4051,10 @@ def api_brands():
         "configured": bool(_brand_cache.get("table_ok", True)),
         "app_host": request.host_url.rstrip("/"),
         "brands": [
-            {**b, "link_base": brand_link_base(b), "example": brand_rep_link(b, "tom")}
+            {**b, "link_base": brand_link_base(b), "example": brand_rep_link(b, "tom"),
+             "logo_url": brand_logo_url(b),
+             "partner_link": (brand_rep_link(b, b["partner_rep"])
+                              if b.get("partner_rep") else None)}
             for b in brands
         ],
     })
@@ -4092,6 +4133,111 @@ def api_brands_deactivate(slug: str):
     except Exception as e:
         log.warning("Brand deactivate failed: %s", e)
         return jsonify({"error": "Failed to deactivate brand."}), 500
+    _invalidate_brand_cache()
+    return jsonify({"ok": True})
+
+
+# ---- Referral partners ------------------------------------------------------
+# A referral partner is a brand with a logo, a "Pathway Catalyst X <name>"
+# badge and one sales rep its leads are attributed to. Created from
+# /admin/reps with a logo upload, so the endpoints take multipart, not JSON.
+# Deactivating goes through DELETE /api/brands/<slug> like any brand.
+_PARTNER_LOGO_MAX = 2 * 1024 * 1024
+_LOGO_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+
+def _sniff_image_type(data: bytes) -> Optional[str]:
+    """PNG/JPEG/WebP by magic bytes. SVG is deliberately not accepted: served
+    from this origin it can carry script."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+def _partner_slug(name: str) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:56] or "partner"
+    if not base[0].isalnum():
+        base = "p" + base
+    taken = _reserved_slugs() | {b["slug"] for b in _get_brands_cached()}
+    slug, n = base, 2
+    while slug in taken:
+        slug, n = f"{base}-{n}", n + 1
+    return slug
+
+def _read_partner_form(require_all: bool) -> tuple[Optional[dict], Optional[bytes], Optional[str]]:
+    """Returns (fields, logo_bytes, error) from a partner create/edit form."""
+    fields = {}
+    name = (request.form.get("name") or "").strip()
+    if name:
+        fields["name"] = name[:120]
+        fields["badge"] = f"Pathway Catalyst X {fields['name']}"
+    elif require_all:
+        return None, None, "Company name is required."
+    rep_code = (request.form.get("rep_code") or "").strip().lower()
+    if rep_code:
+        if not get_rep_info(rep_code):
+            return None, None, "Pick an active rep."
+        fields["partner_rep"] = rep_code
+    elif require_all:
+        return None, None, "Rep is required."
+    logo = None
+    f = request.files.get("logo")
+    if f and f.filename:
+        logo = f.read(_PARTNER_LOGO_MAX + 1)
+        if len(logo) > _PARTNER_LOGO_MAX:
+            return None, None, "Logo must be under 2 MB."
+        if not _sniff_image_type(logo):
+            return None, None, "Logo must be a PNG, JPG or WebP image."
+    elif require_all:
+        return None, None, "Logo is required."
+    return fields, logo, None
+
+def _store_partner_logo(slug: str, logo: bytes) -> str:
+    ctype = _sniff_image_type(logo)
+    path = f"brand-logos/{slug}/{uuid.uuid4().hex}.{_LOGO_EXT[ctype]}"
+    _upload_to_storage(logo, path, ctype)
+    return path
+
+@app.route("/api/partners", methods=["POST"])
+@admin_required
+def api_partners_create():
+    fields, logo, err = _read_partner_form(require_all=True)
+    if err:
+        return jsonify({"error": err}), 400
+    slug = _partner_slug(fields["name"])
+    try:
+        fields["logo"] = _store_partner_logo(slug, logo)
+        sb.table("client_brands").insert({"slug": slug, **fields}).execute()
+    except Exception as e:
+        log.warning("Partner create failed: %s", e)
+        return jsonify({"error": "Failed to create partner. Is migration "
+                                 "20261029_add_brand_badge_and_logo.sql applied?"}), 500
+    _invalidate_brand_cache()
+    brand = get_brand_by_slug(slug, include_inactive=True)
+    return jsonify({"ok": True, "slug": slug,
+                    "link": brand_rep_link(brand, fields["partner_rep"])}), 201
+
+@app.route("/api/partners/<slug>", methods=["POST"])
+@admin_required
+def api_partners_update(slug: str):
+    slug = slug.lower().strip()
+    existing = get_brand_by_slug(slug, include_inactive=True)
+    if not (existing and existing.get("partner_rep")):
+        return jsonify({"error": "Partner not found."}), 404
+    fields, logo, err = _read_partner_form(require_all=False)
+    if err:
+        return jsonify({"error": err}), 400
+    try:
+        if logo:
+            fields["logo"] = _store_partner_logo(slug, logo)
+        if not fields:
+            return jsonify({"error": "No changes."}), 400
+        sb.table("client_brands").update(fields).eq("slug", slug).execute()
+    except Exception as e:
+        log.warning("Partner update failed: %s", e)
+        return jsonify({"error": "Failed to update partner."}), 500
     _invalidate_brand_cache()
     return jsonify({"ok": True})
 

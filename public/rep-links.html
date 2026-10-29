@@ -333,6 +333,48 @@
       .new-brand { grid-template-columns: 1fr; }
     }
 
+    .new-partner {
+      padding: 18px 20px;
+      border-bottom: 1px solid rgba(148,163,184,.1);
+      display: grid;
+      grid-template-columns: 1.4fr 1fr 1.4fr auto;
+      gap: 10px;
+      align-items: center;
+    }
+    .new-partner input, .new-partner select,
+    .partner-edit input, .partner-edit select {
+      background: rgba(15,23,42,.55);
+      border: 1px solid rgba(148,163,184,.2);
+      border-radius: 8px;
+      padding: 9px 12px;
+      color: var(--text);
+      font-size: 13px;
+      font-family: inherit;
+      min-width: 0;
+    }
+    .new-partner input[type=file], .partner-edit input[type=file] {
+      padding: 6px 8px;
+      color: var(--muted);
+    }
+    .partner-logo {
+      width: 60px;
+      height: 40px;
+      border-radius: 8px;
+      background: #000;
+      border: 1px solid var(--border);
+      object-fit: contain;
+      flex: 0 0 auto;
+    }
+    .partner-edit {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      flex: 2;
+    }
+    @media (max-width: 700px) {
+      .new-partner, .partner-edit { grid-template-columns: 1fr; }
+    }
+
     .stats {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -431,6 +473,14 @@
 
     <div class="section-head">
       <div>
+        <h2>Referral partners</h2>
+        <p>Co-branded links: "Pathway Catalyst X &lt;company&gt;" with the partner's logo. Leads go to the rep you pick.</p>
+      </div>
+    </div>
+    <div class="card" id="partnerList"></div>
+
+    <div class="section-head">
+      <div>
         <h2>Branded domains</h2>
         <p>Point a domain's DNS at this app first — a domain set here goes straight into rep links.</p>
       </div>
@@ -443,8 +493,13 @@
     let csrfToken = '';
     let editingCode = null;
     let editingBrand = null;
+    let editingPartner = null;
     let reps = [];
     let brands = [];
+    let partners = [];
+    // Referral partners are brands too, but each one is tied to a single rep,
+    // so they get their own section instead of the brand picker.
+    const isPartner = b => !!b.partner_rep;
     // Which brand the copied links use. Remembered per admin so someone who
     // works one client's reps all day isn't reselecting on every page load.
     let selectedSlug = localStorage.getItem('repLinkBrand') || '';
@@ -488,6 +543,7 @@
         const res = await fetch('/api/reps');
         reps = await res.json();
         renderReps();
+        renderPartners();
       } catch (err) {
         console.error('Failed to load reps:', err);
       }
@@ -653,7 +709,9 @@
       try {
         const res = await fetch('/api/brands');
         const data = await res.json();
-        brands = (data && data.brands) || [];
+        const all = (data && data.brands) || [];
+        partners = all.filter(isPartner);
+        brands = all.filter(b => !isPartner(b));
         appHost = (data && data.app_host) || '';
         const bar = document.getElementById('brandBar');
         const warn = document.getElementById('brandWarn');
@@ -829,10 +887,141 @@
     async function refreshBrands() {
       await loadBrands();
       renderReps();
+      renderPartners();
+    }
+
+    // ---- Referral partners --------------------------------------------------
+
+    function repOptions(selected) {
+      return reps.filter(r => r.active || r.code === selected).map(r =>
+        `<option value="${escapeHtml(r.code)}"${r.code === selected ? ' selected' : ''}>${escapeHtml(r.name)}</option>`
+      ).join('');
+    }
+
+    function renderPartners() {
+      const el = document.getElementById('partnerList');
+      el.innerHTML = `
+        <div class="new-partner">
+          <input id="newPartnerName" type="text" placeholder="Company name" autocomplete="off" />
+          <input id="newPartnerLogo" type="file" accept="image/png,image/jpeg,image/webp" title="Logo" />
+          <select id="newPartnerRep"><option value="">Rep…</option>${repOptions('')}</select>
+          <button class="copy-btn" id="addPartnerBtn">+ Create Link</button>
+          <div class="form-error" id="newPartnerError" style="display:none"></div>
+        </div>
+        ${partners.map(partnerRowHtml).join('')}
+      `;
+      document.getElementById('addPartnerBtn').addEventListener('click', onAddPartner);
+    }
+
+    function partnerRowHtml(p) {
+      const sl = escapeHtml(p.slug);
+      const rep = reps.find(r => r.code === p.partner_rep);
+      const logo = p.logo_url ? `<img class="partner-logo" src="${escapeHtml(p.logo_url)}" alt="" />` : '';
+      if (editingPartner === p.slug) {
+        return `
+          <div class="brand-item">
+            ${logo}
+            <div class="partner-edit">
+              <input id="edit-partner-name-${sl}" type="text" value="${escapeHtml(p.name)}" />
+              <select id="edit-partner-rep-${sl}">${repOptions(p.partner_rep)}</select>
+              <input id="edit-partner-logo-${sl}" type="file" accept="image/png,image/jpeg,image/webp" title="Replace logo" />
+            </div>
+            <div class="actions">
+              <button class="copy-btn" onclick="savePartnerEdit('${sl}')">Save</button>
+              <button class="icon-btn" onclick="editingPartner = null; renderPartners()">Cancel</button>
+            </div>
+          </div>
+        `;
+      }
+      const deactivateBtn = p.active
+        ? `<button class="icon-btn danger" onclick="deactivatePartner('${sl}', '${escapeHtml(p.name)}')">Deactivate</button>`
+        : '';
+      return `
+        <div class="brand-item${p.active ? '' : ' inactive'}">
+          ${logo}
+          <div class="rep-info">
+            <div class="rep-name">${escapeHtml(p.name)}</div>
+            <div class="rep-email">Rep: ${escapeHtml(rep ? rep.name : p.partner_rep)}</div>
+          </div>
+          <div class="rep-link" id="partner-link-${sl}">${escapeHtml(p.partner_link)}</div>
+          <div class="actions">
+            <button class="copy-btn" onclick="copyText('partner-link-${sl}', this)">Copy Link</button>
+            <button class="icon-btn" onclick="editingPartner = '${sl}'; renderPartners()">Edit</button>
+            ${deactivateBtn}
+          </div>
+        </div>
+      `;
+    }
+
+    async function apiForm(path, form) {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken },
+        body: form,
+      });
+      let data = null;
+      try { data = await res.json(); } catch {}
+      if (!res.ok) {
+        throw new Error((data && data.error) || `Request failed (${res.status})`);
+      }
+      return data;
+    }
+
+    async function onAddPartner() {
+      const errEl = document.getElementById('newPartnerError');
+      errEl.style.display = 'none';
+      const name = document.getElementById('newPartnerName').value.trim();
+      const logo = document.getElementById('newPartnerLogo').files[0];
+      const rep = document.getElementById('newPartnerRep').value;
+      if (!name || !logo || !rep) {
+        errEl.textContent = 'Company name, logo, and rep are required.';
+        errEl.style.display = 'block';
+        return;
+      }
+      const form = new FormData();
+      form.append('name', name);
+      form.append('logo', logo);
+      form.append('rep_code', rep);
+      try {
+        await apiForm('/api/partners', form);
+        await refreshBrands();
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.style.display = 'block';
+      }
+    }
+
+    async function savePartnerEdit(slug) {
+      const form = new FormData();
+      form.append('name', document.getElementById(`edit-partner-name-${slug}`).value.trim());
+      form.append('rep_code', document.getElementById(`edit-partner-rep-${slug}`).value);
+      const logo = document.getElementById(`edit-partner-logo-${slug}`).files[0];
+      if (logo) form.append('logo', logo);
+      try {
+        await apiForm(`/api/partners/${encodeURIComponent(slug)}`, form);
+        editingPartner = null;
+        await refreshBrands();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function deactivatePartner(slug, name) {
+      if (!confirm(`Deactivate ${name}? Their link keeps working, but it's greyed out here.`)) return;
+      try {
+        await apiWrite(`/api/brands/${encodeURIComponent(slug)}`, 'DELETE');
+        await refreshBrands();
+      } catch (err) {
+        alert(err.message);
+      }
     }
 
     function copyLink(code, btn) {
-      const linkEl = document.getElementById(`link-${code}`);
+      copyText(`link-${code}`, btn);
+    }
+
+    function copyText(id, btn) {
+      const linkEl = document.getElementById(id);
       navigator.clipboard.writeText(linkEl.textContent).then(() => {
         btn.textContent = 'Copied!';
         btn.classList.add('copied');

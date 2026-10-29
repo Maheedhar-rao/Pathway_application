@@ -77,6 +77,23 @@ body{
   transform: scale(1.06);
 }
 
+/* Co-brand partner logo: wide marks on black, so no square crop or zoom. */
+.partner-logo-wrap{
+  width:auto;
+  aspect-ratio:3 / 2;
+  background:#000;
+}
+
+.partner-logo-wrap .logo{
+  object-fit:contain;
+  transform:none;
+}
+
+/* Two logos leave no room for the text beside them on a phone. */
+@media (max-width:600px){
+  .brand-left:has(.partner-logo-wrap){flex-wrap:wrap}
+}
+
 .brand-text{
   display:flex;
   flex-direction:column;
