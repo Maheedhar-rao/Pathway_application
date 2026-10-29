@@ -474,7 +474,7 @@
     <div class="section-head">
       <div>
         <h2>Referral partners</h2>
-        <p>Co-branded links: "Pathway Catalyst X &lt;company&gt;" with the partner's logo. Leads go to the rep you pick.</p>
+        <p>Co-branded links: "Pathway Catalyst X &lt;company&gt;" with the partner's logo. Leads show as referred by the partner and contact.</p>
       </div>
     </div>
     <div class="card" id="partnerList"></div>
@@ -497,9 +497,9 @@
     let reps = [];
     let brands = [];
     let partners = [];
-    // Referral partners are brands too, but each one is tied to a single rep,
-    // so they get their own section instead of the brand picker.
-    const isPartner = b => !!b.partner_rep;
+    // Referral partners are brands too, but each has one link of its own
+    // (no ?rep=), so they get their own section instead of the brand picker.
+    const isPartner = b => !!b.partner_contact;
     // Which brand the copied links use. Remembered per admin so someone who
     // works one client's reps all day isn't reselecting on every page load.
     let selectedSlug = localStorage.getItem('repLinkBrand') || '';
@@ -892,19 +892,13 @@
 
     // ---- Referral partners --------------------------------------------------
 
-    function repOptions(selected) {
-      return reps.filter(r => r.active || r.code === selected).map(r =>
-        `<option value="${escapeHtml(r.code)}"${r.code === selected ? ' selected' : ''}>${escapeHtml(r.name)}</option>`
-      ).join('');
-    }
-
     function renderPartners() {
       const el = document.getElementById('partnerList');
       el.innerHTML = `
         <div class="new-partner">
           <input id="newPartnerName" type="text" placeholder="Company name" autocomplete="off" />
           <input id="newPartnerLogo" type="file" accept="image/png,image/jpeg,image/webp" title="Logo" />
-          <select id="newPartnerRep"><option value="">Rep…</option>${repOptions('')}</select>
+          <input id="newPartnerContact" type="text" placeholder="Contact name" autocomplete="off" />
           <button class="copy-btn" id="addPartnerBtn">+ Create Link</button>
           <div class="form-error" id="newPartnerError" style="display:none"></div>
         </div>
@@ -915,7 +909,6 @@
 
     function partnerRowHtml(p) {
       const sl = escapeHtml(p.slug);
-      const rep = reps.find(r => r.code === p.partner_rep);
       const logo = p.logo_url ? `<img class="partner-logo" src="${escapeHtml(p.logo_url)}" alt="" />` : '';
       if (editingPartner === p.slug) {
         return `
@@ -923,7 +916,7 @@
             ${logo}
             <div class="partner-edit">
               <input id="edit-partner-name-${sl}" type="text" value="${escapeHtml(p.name)}" />
-              <select id="edit-partner-rep-${sl}">${repOptions(p.partner_rep)}</select>
+              <input id="edit-partner-contact-${sl}" type="text" value="${escapeHtml(p.partner_contact)}" placeholder="Contact name" />
               <input id="edit-partner-logo-${sl}" type="file" accept="image/png,image/jpeg,image/webp" title="Replace logo" />
             </div>
             <div class="actions">
@@ -941,7 +934,7 @@
           ${logo}
           <div class="rep-info">
             <div class="rep-name">${escapeHtml(p.name)}</div>
-            <div class="rep-email">Rep: ${escapeHtml(rep ? rep.name : p.partner_rep)}</div>
+            <div class="rep-email">Contact: ${escapeHtml(p.partner_contact)}</div>
           </div>
           <div class="rep-link" id="partner-link-${sl}">${escapeHtml(p.partner_link)}</div>
           <div class="actions">
@@ -972,16 +965,17 @@
       errEl.style.display = 'none';
       const name = document.getElementById('newPartnerName').value.trim();
       const logo = document.getElementById('newPartnerLogo').files[0];
-      const rep = document.getElementById('newPartnerRep').value;
-      if (!name || !logo || !rep) {
-        errEl.textContent = 'Company name, logo, and rep are required.';
+      const contact = document.getElementById('newPartnerContact').value.trim();
+      const missing = [!name && 'company name', !logo && 'logo', !contact && 'contact name'].filter(Boolean);
+      if (missing.length) {
+        errEl.textContent = `Missing: ${missing.join(', ')}.`;
         errEl.style.display = 'block';
         return;
       }
       const form = new FormData();
       form.append('name', name);
       form.append('logo', logo);
-      form.append('rep_code', rep);
+      form.append('contact_name', contact);
       try {
         await apiForm('/api/partners', form);
         await refreshBrands();
@@ -994,7 +988,7 @@
     async function savePartnerEdit(slug) {
       const form = new FormData();
       form.append('name', document.getElementById(`edit-partner-name-${slug}`).value.trim());
-      form.append('rep_code', document.getElementById(`edit-partner-rep-${slug}`).value);
+      form.append('contact_name', document.getElementById(`edit-partner-contact-${slug}`).value.trim());
       const logo = document.getElementById(`edit-partner-logo-${slug}`).files[0];
       if (logo) form.append('logo', logo);
       try {
