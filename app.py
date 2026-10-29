@@ -327,9 +327,10 @@ def _brand_sort_key(b: dict):
 
 def _load_brands_from_db() -> list:
     try:
-        res = sb.table("client_brands").select(
-            "slug, name, domain, active, is_default"
-        ).execute()
+        # "*" rather than a column list: badge/logo arrived in a later
+        # migration, and naming them would fail every brand back to the
+        # built-in one on a deploy that lands before that migration.
+        res = sb.table("client_brands").select("*").execute()
         rows = res.data or []
     except Exception:
         # Never fatal: a missing table would otherwise take down the public
@@ -351,6 +352,8 @@ def _load_brands_from_db() -> list:
             "domain": (r.get("domain") or "").lower().strip() or None,
             "active": bool(r.get("active", True)),
             "is_default": bool(r.get("is_default", False)),
+            "badge": (r.get("badge") or "").strip() or None,
+            "logo": (r.get("logo") or "").strip() or None,
         })
     out.sort(key=_brand_sort_key)
     return out
@@ -2235,7 +2238,9 @@ def read_rep_param() -> tuple[str, dict]:
     return code, notes
 
 
-def _render_form(client_name=None, brand_slug=None):
+def _render_form(brand=None):
+    client_name = brand["name"] if brand else None
+    brand_slug = brand["slug"] if brand else None
     rep_code, rep_notes = read_rep_param()
     rep_info = get_rep_info(rep_code)
     rep_sig = sign_rep_code(rep_code) if rep_code else ""
@@ -2267,6 +2272,8 @@ def _render_form(client_name=None, brand_slug=None):
         rep_sig=rep_sig,
         idiq_signup_url=IDIQ_SIGNUP_URL,
         client_name=client_name,
+        brand_badge=brand.get("badge") if brand else None,
+        brand_logo=brand.get("logo") if brand else None,
         plaid_enabled=PLAID_ENABLED,
     )
 
@@ -2274,9 +2281,7 @@ def _render_form(client_name=None, brand_slug=None):
 def home():
     # On a brand's own domain (application.croccrm.com) the root path is that
     # brand's entry point; on this app's own host it falls back to the default.
-    brand = current_brand()
-    return _render_form(client_name=(brand["name"] if brand else None),
-                        brand_slug=(brand["slug"] if brand else None))
+    return _render_form(current_brand())
 
 @app.route("/<client_slug>")
 def home_client(client_slug):
@@ -2286,7 +2291,7 @@ def home_client(client_slug):
     brand = get_brand_by_slug(client_slug, include_inactive=True)
     if not brand:
         abort(404)
-    return _render_form(client_name=brand["name"], brand_slug=brand["slug"])
+    return _render_form(brand)
 
 @app.route("/favicon.ico")
 def favicon():

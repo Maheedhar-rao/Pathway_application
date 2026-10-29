@@ -26,7 +26,8 @@
   <meta charset="UTF-8" />
   <meta http-equiv="Cache-Control" content="no-store" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Harvest Lending X {{ client_name or 'Pathway Catalyst' }} — Application Form</title>
+  {% set badge_text = brand_badge or ('Harvest Lending X ' ~ (client_name or 'Pathway Catalyst')) %}
+  <title>{{ badge_text }} — Application Form</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -44,9 +45,19 @@
           loading="eager"
         />
       </div>
+      {% if brand_logo %}
+      <div class="logo-wrap partner-logo-wrap">
+        <img
+          src="{{ url_for('static', filename='brands/' ~ brand_logo) }}"
+          alt="{{ client_name }} Logo"
+          class="logo"
+          loading="eager"
+        />
+      </div>
+      {% endif %}
 
       <div class="brand-text">
-        <span class="badge">Harvest Lending X {{ client_name or 'Pathway Catalyst' }}</span>
+        <span class="badge">{{ badge_text }}</span>
         <h1>Business Financing Application</h1>
         <p class="lead">Fast, secure, and confidential submission.</p>
       </div>
