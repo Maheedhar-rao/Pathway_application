@@ -45,10 +45,10 @@
           loading="eager"
         />
       </div>
-      {% if brand_logo %}
+      {% if brand_logo_url %}
       <div class="logo-wrap partner-logo-wrap">
         <img
-          src="{{ url_for('static', filename='brands/' ~ brand_logo) }}"
+          src="{{ brand_logo_url }}"
           alt="{{ client_name }} Logo"
           class="logo"
           loading="eager"
