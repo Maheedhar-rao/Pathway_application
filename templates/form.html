@@ -111,6 +111,10 @@
       <input type="hidden" name="rep_code" value="{{ rep_code }}" />
       <input type="hidden" name="rep_sig" value="{{ rep_sig }}" />
       {% endif %}
+      {% if partner %}
+      <input type="hidden" name="partner" value="{{ partner }}" />
+      <input type="hidden" name="partner_sig" value="{{ partner_sig }}" />
+      {% endif %}
 
       <!-- ============== PAGE 1 — Contact Info ============== -->
       <div class="form-page card active" data-page="1">
