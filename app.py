@@ -354,7 +354,7 @@ def _load_brands_from_db() -> list:
             "is_default": bool(r.get("is_default", False)),
             "badge": (r.get("badge") or "").strip() or None,
             "logo": (r.get("logo") or "").strip() or None,
-            "partner_rep": (r.get("partner_rep") or "").strip() or None,
+            "partner_contact": (r.get("partner_contact") or "").strip() or None,
         })
     out.sort(key=_brand_sort_key)
     return out
@@ -444,6 +444,28 @@ def brand_logo_url(brand: Optional[dict]) -> Optional[str]:
         return None
     v = hashlib.sha256(brand["logo"].encode()).hexdigest()[:10]
     return url_for("brand_logo", slug=brand["slug"], v=v)
+
+def sign_partner(slug: str) -> str:
+    # Namespaced so a partner signature can never pass as a rep signature.
+    return sign_rep_code(f"partner:{slug}")
+
+def partner_referral(form: dict) -> Optional[dict]:
+    """Stand-in rep_info for a lead from a referral partner's link.
+
+    Partners' contacts are outsiders with no sales_reps row, so this carries
+    only a display name -- it lands in applications.rep_name and the lead
+    emails -- and no email: those leads go to the internal recipients, the
+    same as a direct submission.
+    """
+    slug = (form.get("partner") or "").strip().lower()
+    sig = (form.get("partner_sig") or "").strip()
+    if not slug or not hmac.compare_digest(sign_partner(slug), sig):
+        return None
+    brand = get_brand_by_slug(slug, include_inactive=True)
+    if not (brand and brand.get("partner_contact")):
+        return None
+    return {"name": f"{brand['name']} (partner: {brand['partner_contact']})",
+            "email": None}
 
 # ---- Sales Rep Configuration ------------------------------------------------
 # Reps live in the Supabase `sales_reps` table (see migration
@@ -2283,6 +2305,9 @@ def _render_form(brand=None):
         client_name=client_name,
         brand_badge=brand.get("badge") if brand else None,
         brand_logo_url=brand_logo_url(brand),
+        partner=brand_slug if brand and brand.get("partner_contact") else None,
+        partner_sig=(sign_partner(brand_slug)
+                     if brand and brand.get("partner_contact") else None),
         plaid_enabled=PLAID_ENABLED,
     )
 
@@ -2381,7 +2406,7 @@ def submit_application():
     rep_sig = form.get("rep_sig", "").strip()
     if rep_code and not verify_rep_code(rep_code, rep_sig):
         rep_code = ""
-    rep_info = get_rep_info(rep_code)
+    rep_info = get_rep_info(rep_code) or partner_referral(form)
 
     if "has_owner_1" not in form or not form.get("has_owner_1"):
         form["has_owner_1"] = "No"
@@ -2658,7 +2683,7 @@ def submit():
     rep_sig = form.get("rep_sig", "").strip()
     if rep_code and not verify_rep_code(rep_code, rep_sig):
         rep_code = ""  # reject tampered rep code
-    rep_info = get_rep_info(rep_code)
+    rep_info = get_rep_info(rep_code) or partner_referral(form)
 
     # Enforce default for has_owner_1 if not present
     if "has_owner_1" not in form or not form.get("has_owner_1"):
@@ -4053,8 +4078,7 @@ def api_brands():
         "brands": [
             {**b, "link_base": brand_link_base(b), "example": brand_rep_link(b, "tom"),
              "logo_url": brand_logo_url(b),
-             "partner_link": (brand_rep_link(b, b["partner_rep"])
-                              if b.get("partner_rep") else None)}
+             "partner_link": brand_link_base(b) if b.get("partner_contact") else None}
             for b in brands
         ],
     })
@@ -4139,7 +4163,7 @@ def api_brands_deactivate(slug: str):
 
 # ---- Referral partners ------------------------------------------------------
 # A referral partner is a brand with a logo, a "Pathway Catalyst X <name>"
-# badge and one sales rep its leads are attributed to. Created from
+# badge and the partner's own contact person (see partner_referral). Created from
 # /admin/reps with a logo upload, so the endpoints take multipart, not JSON.
 # Deactivating goes through DELETE /api/brands/<slug> like any brand.
 _PARTNER_LOGO_MAX = 2 * 1024 * 1024
@@ -4175,13 +4199,11 @@ def _read_partner_form(require_all: bool) -> tuple[Optional[dict], Optional[byte
         fields["badge"] = f"Pathway Catalyst X {fields['name']}"
     elif require_all:
         return None, None, "Company name is required."
-    rep_code = (request.form.get("rep_code") or "").strip().lower()
-    if rep_code:
-        if not get_rep_info(rep_code):
-            return None, None, "Pick an active rep."
-        fields["partner_rep"] = rep_code
+    contact = (request.form.get("contact_name") or "").strip()
+    if contact:
+        fields["partner_contact"] = contact[:120]
     elif require_all:
-        return None, None, "Rep is required."
+        return None, None, "Contact name is required."
     logo = None
     f = request.files.get("logo")
     if f and f.filename:
@@ -4216,15 +4238,14 @@ def api_partners_create():
                                  "20261029_add_brand_badge_and_logo.sql applied?"}), 500
     _invalidate_brand_cache()
     brand = get_brand_by_slug(slug, include_inactive=True)
-    return jsonify({"ok": True, "slug": slug,
-                    "link": brand_rep_link(brand, fields["partner_rep"])}), 201
+    return jsonify({"ok": True, "slug": slug, "link": brand_link_base(brand)}), 201
 
 @app.route("/api/partners/<slug>", methods=["POST"])
 @admin_required
 def api_partners_update(slug: str):
     slug = slug.lower().strip()
     existing = get_brand_by_slug(slug, include_inactive=True)
-    if not (existing and existing.get("partner_rep")):
+    if not (existing and existing.get("partner_contact")):
         return jsonify({"error": "Partner not found."}), 404
     fields, logo, err = _read_partner_form(require_all=False)
     if err:
