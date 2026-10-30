@@ -1135,3 +1135,27 @@ input:invalid:focus, select:invalid:focus, textarea:invalid:focus {
   text-transform:uppercase; letter-spacing:.08em;
 }
 .plaid-or::before, .plaid-or::after{ content:''; flex:1; height:1px; background:var(--border2); }
+
+/* Pathway × Plaid lockup (templates/_plaid_lockup.html). Both marks sit on
+   matching white tiles: the Pathway badge is drawn on near-white and Plaid's
+   mark is black, so neither is recoloured to suit the page behind it. */
+.plaid-lockup{ display:flex; align-items:center; gap:10px; margin:0 0 12px; }
+.plaid-lockup .lk-tile{
+  height:44px; min-width:44px; padding:0 4px;
+  display:inline-flex; align-items:center; justify-content:center;
+  background:#fff; border-radius:12px;
+  box-shadow:0 6px 16px rgba(0,0,0,.25);
+}
+.plaid-lockup .lk-tile img{ height:40px; width:auto; display:block; }
+.plaid-lockup .lk-plaid{ padding:0 12px; }
+.plaid-lockup .lk-plaid img{ height:20px; }
+.plaid-lockup .lk-wordmark{ color:#111; font-weight:700; font-size:18px; letter-spacing:-.01em; }
+.plaid-lockup .lk-x{ font-size:18px; opacity:.6; }
+.lk-what{ margin:0 0 8px !important; }
+.lk-trust{ list-style:none; margin:0 0 14px; padding:0; display:grid; gap:6px; font-size:13px; opacity:.9; }
+.lk-trust li{ display:flex; align-items:flex-start; gap:8px; line-height:1.45; }
+.lk-trust svg{
+  flex:0 0 auto; width:15px; height:15px; margin-top:2px;
+  fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round;
+}
+.lk-trust a{ color:inherit; text-decoration:underline; }
