@@ -3,22 +3,15 @@
     Link opens, and say why it is safe -- encryption, no credentials shared,
     and that the connection can be undone.
 
-    The Plaid mark is the official file at static/plaid-logo.svg, used as
-    supplied (never redrawn or recoloured). Until that file exists the tile
-    shows the name in plain type instead.
+    The Pathway badge overlaps Plaid's mark on its navy tile. The mark is
+    static/plaid-mark.png, taken unaltered from the lockup artwork; the navy
+    tile behind it is CSS.
 
     compact=True (the OAuth return pages) shows the logos alone: the applicant
     has already chosen Plaid by then. -#}
 <div class="plaid-lockup" role="img" aria-label="Pathway Catalyst and Plaid">
   <span class="lk-tile"><img src="{{ url_for('static', filename='pathway-logo.png') }}" alt="" /></span>
-  <span class="lk-x" aria-hidden="true">×</span>
-  <span class="lk-tile lk-plaid">
-    {%- if plaid_logo -%}
-    <img src="{{ url_for('static', filename='plaid-logo.svg') }}" alt="" />
-    {%- else -%}
-    <span class="lk-wordmark">Plaid</span>
-    {%- endif -%}
-  </span>
+  <span class="lk-tile lk-plaid"><img src="{{ url_for('static', filename='plaid-mark.png') }}" alt="" /></span>
 </div>
 {% if not compact %}
 <p class="lk-what">

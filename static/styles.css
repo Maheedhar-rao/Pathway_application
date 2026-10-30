@@ -1136,21 +1136,27 @@ input:invalid:focus, select:invalid:focus, textarea:invalid:focus {
 }
 .plaid-or::before, .plaid-or::after{ content:''; flex:1; height:1px; background:var(--border2); }
 
-/* Pathway × Plaid lockup (templates/_plaid_lockup.html). Both marks sit on
-   matching white tiles: the Pathway badge is drawn on near-white and Plaid's
-   mark is black, so neither is recoloured to suit the page behind it. */
-.plaid-lockup{ display:flex; align-items:center; gap:10px; margin:0 0 12px; }
+/* Pathway × Plaid lockup (templates/_plaid_lockup.html): the white Pathway
+   tile overlaps the navy Plaid tile, as in the lockup artwork. The Pathway
+   badge is drawn on near-white and Plaid's mark is white, so each keeps its
+   own tile whatever the page behind it is. */
+.plaid-lockup{ display:flex; align-items:center; margin:0 0 12px; }
 .plaid-lockup .lk-tile{
-  height:44px; min-width:44px; padding:0 4px;
   display:inline-flex; align-items:center; justify-content:center;
-  background:#fff; border-radius:12px;
-  box-shadow:0 6px 16px rgba(0,0,0,.25);
+  border-radius:14px; box-shadow:0 6px 16px rgba(0,0,0,.25);
 }
-.plaid-lockup .lk-tile img{ height:40px; width:auto; display:block; }
-.plaid-lockup .lk-plaid{ padding:0 12px; }
-.plaid-lockup .lk-plaid img{ height:20px; }
-.plaid-lockup .lk-wordmark{ color:#111; font-weight:700; font-size:18px; letter-spacing:-.01em; }
-.plaid-lockup .lk-x{ font-size:18px; opacity:.6; }
+.plaid-lockup .lk-tile:first-child{
+  position:relative; z-index:1;
+  width:52px; height:54px; background:#fff; border:1px solid #dbe4ee;
+}
+.plaid-lockup .lk-tile:first-child img{ width:46px; height:46px; display:block; }
+.plaid-lockup .lk-plaid{
+  width:52px; height:44px; margin-left:-12px; padding-left:12px;
+  background:#0f2641; border-radius:0 14px 14px 0;
+  /* Navy on these near-navy pages loses its edge without a hairline. */
+  border:1px solid rgba(255,255,255,.14); border-left:0;
+}
+.plaid-lockup .lk-plaid img{ width:21px; height:21px; display:block; }
 .lk-what{ margin:0 0 8px !important; }
 .lk-trust{ list-style:none; margin:0 0 14px; padding:0; display:grid; gap:6px; font-size:13px; opacity:.9; }
 .lk-trust li{ display:flex; align-items:flex-start; gap:8px; line-height:1.45; }

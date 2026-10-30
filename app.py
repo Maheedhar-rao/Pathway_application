@@ -3269,15 +3269,6 @@ def upload_docs():
 # to file one against an application by guessing its number.
 _PLAID_SESSION_KEYS = {"form": SESSION_VISIT_APP_KEY, "resume": SESSION_RESUME_KEY}
 
-# The official Plaid mark, dropped in by hand (Plaid publishes no download).
-# Checked once at startup; a deploy is what adds it. Absent, the lockup in
-# _plaid_lockup.html shows the name in plain type rather than an imitation.
-PLAID_LOGO = (APP_DIR / "static" / "plaid-logo.svg").is_file()
-
-
-@app.context_processor
-def _plaid_branding():
-    return {"plaid_logo": PLAID_LOGO}
 SESSION_PLAID_LINK = "plaid_link"
 
 
