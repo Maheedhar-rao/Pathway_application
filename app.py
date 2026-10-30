@@ -3268,6 +3268,7 @@ def upload_docs():
 # connection is a standing grant to someone's bank data; it must not be possible
 # to file one against an application by guessing its number.
 _PLAID_SESSION_KEYS = {"form": SESSION_VISIT_APP_KEY, "resume": SESSION_RESUME_KEY}
+
 SESSION_PLAID_LINK = "plaid_link"
 
 

@@ -567,8 +567,8 @@
           {% if plaid_enabled %}
           <div class="plaid-connect" data-plaid-connect data-context="form" data-csrf="{{ csrf_token() }}">
             <h4>Connect your business bank — fastest</h4>
-            <p>Log in to your bank through Plaid and we'll fetch your last 4 months of statements for you.
-               Read-only and encrypted; we never see your bank password.</p>
+            <p>Skip the PDFs: connect once and we'll fetch your last 4 months of statements for you.</p>
+            {% include "_plaid_lockup.html" %}
             <button type="button" class="btn primary plaid-btn">Connect your bank</button>
             <p class="plaid-status" role="status" aria-live="polite"></p>
           </div>
