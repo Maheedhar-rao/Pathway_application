@@ -57,6 +57,7 @@
       <div class="card-body">
         <div class="plaid-connect" data-plaid-connect data-context="form" data-csrf="{{ csrf_token() }}"
              data-link-token="{{ link_token }}">
+          {% with compact=True %}{% include "_plaid_lockup.html" %}{% endwith %}
           <h4>Connect your business bank</h4>
           <p>Welcome back{% if business %}, {{ business }}{% endif %}. We're finishing the connection to your bank.</p>
           <button type="button" class="btn primary plaid-btn">Connect your bank</button>
@@ -105,6 +106,7 @@
       <div class="card-body">
         <div class="plaid-connect" data-plaid-connect data-context="resume" data-csrf="{{ csrf_token() }}"
              data-link-token="{{ link_token }}" data-continue-url="{{ url_for('credit_setup') }}">
+          {% with compact=True %}{% include "_plaid_lockup.html" %}{% endwith %}
           <h4>Welcome back{% if business %}, {{ business }}{% endif %}</h4>
           <p>We're finishing the connection to your bank, then we'll take you back to your credit setup.</p>
           <button type="button" class="btn primary plaid-btn">Connect your bank</button>

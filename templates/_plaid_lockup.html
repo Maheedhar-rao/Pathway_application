@@ -1,0 +1,31 @@
+{#- Pathway × Plaid lockup and the "what is Plaid" explainer, shown above every
+    "Connect your bank" button. Plaid's pre-Link guidance: name Plaid before
+    Link opens, and say why it is safe -- encryption, no credentials shared,
+    and that the connection can be undone.
+
+    The Pathway badge overlaps Plaid's mark on its navy tile. The mark is
+    static/plaid-mark.png, taken unaltered from the lockup artwork; the navy
+    tile behind it is CSS.
+
+    compact=True (the OAuth return pages) shows the logos alone: the applicant
+    has already chosen Plaid by then. -#}
+<div class="plaid-lockup" role="img" aria-label="Pathway Catalyst and Plaid">
+  <span class="lk-tile"><img src="{{ url_for('static', filename='pathway-logo.png') }}" alt="" /></span>
+  <span class="lk-tile lk-plaid"><img src="{{ url_for('static', filename='plaid-mark.png') }}" alt="" /></span>
+</div>
+{% if not compact %}
+<p class="lk-what">
+  We use <strong>Plaid</strong> to connect your bank. Plaid is the secure service many popular finance apps
+  use to link bank accounts.
+</p>
+<ul class="lk-trust">
+  <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      Bank-level, 256-bit encryption</li>
+  <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><path d="M3 3l18 18"/></svg>
+      You sign in with your bank — we never see your username or password</li>
+  <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      Read-only — we can see statements, never move money</li>
+  <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      Disconnect any time at <a href="https://my.plaid.com" target="_blank" rel="noopener noreferrer">my.plaid.com</a></li>
+</ul>
+{% endif %}
