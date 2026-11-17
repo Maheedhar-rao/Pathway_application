@@ -2192,18 +2192,25 @@ def _store_file_bytes(sid: int, original: str, file_bytes: bytes, content_type: 
 
 
 def _process_uploads(sid: int, request_files) -> tuple[List[str], List[str], List[str]]:
-    """Pull bank_files / voided_check / id_doc out of a Flask request.files and
-    upload each. Returns (doc_types_saved, attached_storage_paths, failed_filenames)."""
+    """Pull bank_files / processing_statements / voided_check / id_doc out of a
+    Flask request.files and upload each. Returns (doc_types_saved,
+    attached_storage_paths, failed_filenames).
+
+    Card processing statements come from the sales desktop's document request
+    (nothing on this app's own form asks for them yet). They are stored as
+    "processing_statement", the name Paradise's stips already use for them."""
     saved: List[str] = []
     attached_paths: List[str] = []
     failed: List[str] = []
 
-    for f in request_files.getlist("bank_files"):
-        if not f or not f.filename:
-            continue
-        if _store_uploaded_file(sid, f, "bank_statement", attached_paths, failed) \
-                and "bank_statement" not in saved:
-            saved.append("bank_statement")
+    for field, dtype in [("bank_files", "bank_statement"),
+                         ("processing_statements", "processing_statement")]:
+        for f in request_files.getlist(field):
+            if not f or not f.filename:
+                continue
+            if _store_uploaded_file(sid, f, dtype, attached_paths, failed) \
+                    and dtype not in saved:
+                saved.append(dtype)
 
     for field, dtype in [("voided_check", "voided_check"), ("id_doc", "id_doc")]:
         f = request_files.get(field)
@@ -2565,6 +2572,67 @@ def submit_application():
             log.error("Failed to generate PDF for submission %s: %s\n%s", submission_id, e, traceback.format_exc())
 
     return jsonify(success=True, submission_id=submission_id)
+
+
+# ---- Sales desktop: which application is this merchant's? -------------------
+# The sales desktop asks merchants for missing documents (statements, voided
+# check, licence, processing statements) by a link of its own. Many of those
+# merchants applied here directly, so their application is in this app and not
+# in the sales desktop. To put the files on the right submission it asks, by
+# the owner's email, which submission that is, then uploads to
+# /upload-documents/<sid> exactly as this app's own page does.
+#
+# Asked with a token signed with APP_SECRET, which the sales desktop already
+# holds (PATHWAY_APP_SECRET, for rep codes and resume links), timed so a
+# captured one is useless in minutes. The answer is the submission id and
+# nothing else: no name, no business, nothing from the payload.
+SALES_LOOKUP_SALT = "sales-desktop-lookup-v1"
+SALES_LOOKUP_MAX_AGE_SECONDS = 300
+
+
+def _like_exact(text: str) -> str:
+    """An ilike pattern that matches `text` only, ignoring case: LIKE's own
+    wildcards (an underscore is common in an email) escaped."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def submission_for_email(email: str) -> Optional[int]:
+    """The newest submission whose first or second owner has this email."""
+    email = (email or "").strip().lower()
+    if not email or "@" not in email:
+        return None
+    found: List[tuple] = []
+    for key in ("owner_0_email", "owner_1_email"):
+        res = (sb.table("applications")
+               .select(f"id, created_at, email:payload->>{key}")
+               .ilike(f"payload->>{key}", _like_exact(email))
+               .order("created_at", desc=True).limit(5).execute())
+        # Checked again here, so a pattern can never stand in for the address.
+        found += [(r.get("created_at") or "", r["id"]) for r in (res.data or [])
+                  if (r.get("email") or "").strip().lower() == email]
+    return int(max(found)[1]) if found else None
+
+
+@app.route("/partner/submission-lookup", methods=["POST"])
+@csrf.exempt
+def partner_submission_lookup():
+    token = ((request.get_json(silent=True) or {}).get("token") or "").strip()
+    serializer = URLSafeTimedSerializer(os.environ.get("APP_SECRET", "dev-secret"),
+                                        salt=SALES_LOOKUP_SALT)
+    try:
+        data = serializer.loads(token, max_age=SALES_LOOKUP_MAX_AGE_SECONDS)
+    except (BadSignature, SignatureExpired):
+        abort(403)
+    email = data.get("email") if isinstance(data, dict) else None
+    try:
+        sid = submission_for_email(email or "")
+    except Exception as exc:
+        log.error("submission lookup failed: %s", exc)
+        return jsonify(error="lookup failed"), 502
+    log_event("sales_desktop_lookup", payload={"found": sid is not None})
+    if sid is None:
+        return jsonify(submission_id=None), 404
+    return jsonify(submission_id=sid)
 
 
 @app.route("/upload-documents/<int:sid>", methods=["POST"])
