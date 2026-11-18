@@ -732,6 +732,20 @@
         beacon('form_step_blocked', { step: current, field: field, reason: reason });
       }
 
+      // The pad is empty but every field on the page passed, so the printed
+      // name is filled in (it is required). Offer it as the signature rather
+      // than refusing: a drawing pad that will not take someone's finger must
+      // never be what stops an application. Returns true once signed.
+      function offerTypedSignature(pad, printName, field) {
+        const name = fieldValue(printName);
+        const ok = name && confirm('No drawn signature was detected.\n\n'
+          + 'Use your typed name "' + name + '" as your electronic signature?\n\n'
+          + 'OK = sign with typed name    Cancel = draw it instead');
+        if (ok && pad.adoptTyped(name) && pad.isSigned()) return true;
+        reportBlocked(field, 'signature_missing');
+        return false;
+      }
+
       function validateCurrentPage() {
         const page = pageByNum(current);
         if (!page) return true;
@@ -752,9 +766,7 @@
         // Owner-1 signature gate on page 3
         if (current === 3) {
           const sig = window.__primarySignaturePad;
-          if (sig && !sig.isSigned()) {
-            reportBlocked('signature_data', 'signature_missing');
-            alert('Please sign the application before continuing.');
+          if (sig && !sig.isSigned() && !offerTypedSignature(sig, 'signature_print_name', 'signature_data')) {
             sig.canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
             return false;
           }
@@ -764,9 +776,7 @@
           const toggle = document.getElementById('has_owner_1');
           if (toggle && toggle.value === 'Yes') {
             const sig2 = window.__owner1SignaturePad;
-            if (sig2 && !sig2.isSigned()) {
-              reportBlocked('owner_1_signature_data', 'signature_missing');
-              alert('Please have the Second Owner sign the application before continuing.');
+            if (sig2 && !sig2.isSigned() && !offerTypedSignature(sig2, 'owner_1_signature_print_name', 'owner_1_signature_data')) {
               sig2.canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
               return false;
             }
@@ -1079,7 +1089,7 @@
 
     // ── Signature Pads ──
     (function () {
-      function initSignaturePad(canvasId, hiddenId, clearBtnId, dateId) {
+      function initSignaturePad(canvasId, hiddenId, clearBtnId, dateId, printName) {
         const canvas = document.getElementById(canvasId);
         const hiddenInput = document.getElementById(hiddenId);
         const clearBtn = document.getElementById(clearBtnId);
@@ -1225,19 +1235,64 @@
           }
         }
 
-        return {
+        const api = {
           canvas: canvas, hiddenInput: hiddenInput, dateInput: dateInput,
           isSigned: function () {
             if (drawing) { drawing = false; if (wrap) wrap.classList.remove('signing'); }
             if (hasSigned && !hiddenInput.value) commit();
             return hasSigned && !!hiddenInput.value;
           },
-          clear: clearPad, rescale: rescale,
+          clear: clearPad, rescale: rescale, adoptTyped: adoptTyped,
         };
+
+        // Typed signature: the applicant's printed name, written into the pad
+        // in a script face and stored exactly like a drawn one, so the PDF and
+        // the server see no difference. Only ever applied on the applicant's
+        // explicit say-so (the link under the pad, or OK on the prompt when
+        // Next finds the pad empty) -- the drawing pad can never be the reason
+        // an application cannot go through.
+        function adoptTyped(name) {
+          name = (name || '').trim();
+          if (!name) return false;
+          let rect = canvas.getBoundingClientRect();
+          if (!rect.width || !rect.height) { rescale(); rect = canvas.getBoundingClientRect(); }
+          if (!rect.width || !rect.height) return false;
+          ctx.clearRect(0, 0, rect.width, rect.height);
+          const face = "'Snell Roundhand','Apple Chancery','Brush Script MT','Segoe Script',cursive";
+          let size = Math.min(56, rect.height * 0.45);
+          ctx.font = 'italic ' + size + 'px ' + face;
+          while (size > 14 && ctx.measureText(name).width > rect.width * 0.85) {
+            size -= 2; ctx.font = 'italic ' + size + 'px ' + face;
+          }
+          ctx.fillStyle = ctx.strokeStyle;
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(name, rect.width / 2, rect.height / 2);
+          ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+          hasSigned = true;
+          commit();
+          return true;
+        }
+        if (hint && printName) {
+          const typed = document.createElement('button');
+          typed.type = 'button';
+          typed.className = 'sig-typed-btn';
+          typed.textContent = "Can't draw? Use your typed name as your signature";
+          typed.addEventListener('click', function () {
+            const pn = document.querySelector('[name="' + printName + '"]');
+            if (!pn || !pn.value.trim()) {
+              alert('Enter your full legal name in "Print Name" first, then tap this again.');
+              if (pn) pn.focus();
+              return;
+            }
+            adoptTyped(pn.value);
+          });
+          hint.insertAdjacentElement('afterend', typed);
+        }
+        return api;
       }
 
-      const primary = initSignaturePad('signatureCanvas', 'signatureData', 'clearSigBtn', 'signatureDate');
-      const secondary = initSignaturePad('signatureCanvas1', 'signatureData1', 'clearSigBtn1', 'signatureDate1');
+      const primary = initSignaturePad('signatureCanvas', 'signatureData', 'clearSigBtn', 'signatureDate', 'signature_print_name');
+      const secondary = initSignaturePad('signatureCanvas1', 'signatureData1', 'clearSigBtn1', 'signatureDate1', 'owner_1_signature_print_name');
       window.__primarySignaturePad = primary;
       window.__owner1SignaturePad = secondary;
     })();
