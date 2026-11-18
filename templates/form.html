@@ -1128,30 +1128,88 @@
           dateInput.value = y + '-' + m + '-' + d;
         }
 
+        // Status line under the pad: the applicant sees the signature was
+        // taken BEFORE pressing Next, instead of finding out from an alert.
+        const hint = wrap && wrap.parentElement ? wrap.parentElement.querySelector('.sig-hint') : null;
+        const HINT_EMPTY = 'Draw your signature in the box above with your finger or mouse';
+        function setStatus() {
+          if (!hint) return;
+          hint.textContent = hasSigned ? 'Signature captured ✓  (tap Clear to redo)' : HINT_EMPTY;
+          hint.classList.toggle('sig-ok', hasSigned);
+        }
+        setStatus();
+
         function getPos(e) {
           const rect = canvas.getBoundingClientRect();
-          const touch = e.touches ? e.touches[0] : e;
-          return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+          const pt = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+          return { x: pt.clientX - rect.left, y: pt.clientY - rect.top };
         }
-        function startDraw(e) { e.preventDefault(); drawing = true; if (wrap) wrap.classList.add('signing');
-          const pos = getPos(e); ctx.beginPath(); ctx.moveTo(pos.x, pos.y); }
-        function draw(e) { if (!drawing) return; e.preventDefault(); const pos = getPos(e);
-          ctx.lineTo(pos.x, pos.y); ctx.stroke(); hasSigned = true; }
-        function endDraw(e) { if (!drawing) return; e.preventDefault(); drawing = false;
+        // Store the drawing in the form field. Called after every stroke AND
+        // from isSigned(): if a browser never delivers the end-of-stroke
+        // event (iOS can swallow touchend/pointerup), the ink on the canvas
+        // still counts instead of the pad looking signed but being refused.
+        function commit() {
+          if (!hasSigned) return;
+          try { hiddenInput.value = canvas.toDataURL('image/png'); } catch (_) {}
+          if (wrap) wrap.classList.add('has-sig');
+          setStatus();
+        }
+        function startDraw(e) {
+          if (e.cancelable) e.preventDefault();
+          drawing = true;
+          if (wrap) wrap.classList.add('signing');
+          const pos = getPos(e);
+          // A dot where the finger lands, so even a tap leaves visible ink
+          // and counts -- a very short or shaky signature used to register
+          // as "not signed" because only movement drew anything.
+          ctx.beginPath(); ctx.arc(pos.x, pos.y, ctx.lineWidth / 2, 0, Math.PI * 2);
+          ctx.fillStyle = ctx.strokeStyle; ctx.fill();
+          ctx.beginPath(); ctx.moveTo(pos.x, pos.y);
+          hasSigned = true;
+        }
+        function draw(e) {
+          if (!drawing) return;
+          if (e.cancelable) e.preventDefault();
+          const pos = getPos(e);
+          ctx.lineTo(pos.x, pos.y); ctx.stroke();
+          hasSigned = true;
+        }
+        function endDraw(e) {
+          if (!drawing) return;
+          if (e && e.cancelable) e.preventDefault();
+          drawing = false;
           if (wrap) wrap.classList.remove('signing');
-          if (hasSigned) { if (wrap) wrap.classList.add('has-sig'); hiddenInput.value = canvas.toDataURL('image/png'); } }
+          commit();
+        }
         function clearPad() { const rect = canvas.getBoundingClientRect();
           ctx.clearRect(0, 0, rect.width, rect.height); hasSigned = false; hiddenInput.value = '';
-          if (wrap) wrap.classList.remove('has-sig'); }
+          if (wrap) wrap.classList.remove('has-sig'); setStatus(); }
 
-        canvas.addEventListener('mousedown', startDraw);
-        canvas.addEventListener('mousemove', draw);
-        canvas.addEventListener('mouseup', endDraw);
-        canvas.addEventListener('mouseleave', endDraw);
-        canvas.addEventListener('touchstart', startDraw, { passive: false });
-        canvas.addEventListener('touchmove', draw, { passive: false });
-        canvas.addEventListener('touchend', endDraw);
-        canvas.addEventListener('touchcancel', endDraw);
+        if (window.PointerEvent) {
+          // One path for finger, pen and mouse. Pointer capture keeps the
+          // stroke attached to the pad when the finger slides off its edge,
+          // and touch-action:none on the wrapper stops Safari turning the
+          // stroke into a page scroll.
+          canvas.addEventListener('pointerdown', function (e) {
+            if (e.button > 0) return;
+            try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+            startDraw(e);
+          });
+          canvas.addEventListener('pointermove', draw);
+          canvas.addEventListener('pointerup', endDraw);
+          canvas.addEventListener('pointercancel', endDraw);
+          canvas.addEventListener('lostpointercapture', endDraw);
+        } else {
+          canvas.addEventListener('mousedown', startDraw);
+          canvas.addEventListener('mousemove', draw);
+          canvas.addEventListener('mouseup', endDraw);
+          canvas.addEventListener('mouseleave', endDraw);
+          canvas.addEventListener('touchstart', startDraw, { passive: false });
+          canvas.addEventListener('touchmove', draw, { passive: false });
+          canvas.addEventListener('touchend', endDraw);
+          canvas.addEventListener('touchcancel', endDraw);
+        }
+        canvas.style.touchAction = 'none';
         if (clearBtn) clearBtn.addEventListener('click', clearPad);
 
         function rescale() {
@@ -1169,7 +1227,11 @@
 
         return {
           canvas: canvas, hiddenInput: hiddenInput, dateInput: dateInput,
-          isSigned: function () { return hasSigned && !!hiddenInput.value; },
+          isSigned: function () {
+            if (drawing) { drawing = false; if (wrap) wrap.classList.remove('signing'); }
+            if (hasSigned && !hiddenInput.value) commit();
+            return hasSigned && !!hiddenInput.value;
+          },
           clear: clearPad, rescale: rescale,
         };
       }
