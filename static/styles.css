@@ -561,6 +561,33 @@ label.inline{
   margin-bottom:20px;
 }
 
+/* Shown when a saved draft was put back into the form */
+.draft-notice{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+  background:rgba(96,165,250,.08);
+  border:1px solid rgba(96,165,250,.35);
+  border-radius:var(--radius);
+  padding:14px 18px;
+  margin-bottom:20px;
+  font-size:14px;
+  color:var(--text);
+}
+.draft-reset{
+  background:none;
+  border:1px solid var(--border2);
+  color:var(--primary2);
+  border-radius:10px;
+  padding:6px 12px;
+  font-size:13px;
+  font-weight:600;
+  cursor:pointer;
+}
+.draft-reset:hover{ border-color:var(--primary); }
+
 .error-summary h3{
   margin:0 0 8px;
   font-size:15px;

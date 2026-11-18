@@ -796,6 +796,7 @@
             document.getElementById('submissionId').value = data.submission_id;
             window.__submissionId = data.submission_id;
             submitted = true;   // leaving from here on is not abandonment
+            if (window.__clearFormDraft) window.__clearFormDraft();
             show(current + 1);
           } else {
             alert(data.error || 'Something went wrong. Please try again.');
@@ -928,11 +929,129 @@
         }
       }
 
+      // ── Draft autosave ──
+      // A reload, a closed tab or iOS discarding the page used to throw away
+      // everything typed so far, and the applicant had to start over. What
+      // they typed is kept on THIS device only (localStorage, never sent
+      // anywhere) and put back after the reset above.
+      //
+      // Never kept: SSN, date of birth, EIN, signatures, the consent boxes,
+      // files, and hidden fields (CSRF token, rep link, submission id). Those
+      // are re-entered, and the page validation asks for them on the way
+      // through. The draft expires after DRAFT_TTL_MS and is cleared on a
+      // successful submit or by "Start over", so a shared device does not
+      // keep one applicant's details for the next.
+      const DRAFT_KEY = 'pathway_form_draft_v1';
+      const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
+      const NEVER_SAVE = /(^|_)(ssn|dob|ein)$|signature_data$|signature_date$|consent$/;
+
+      function savable(el) {
+        if (!el.name || el.disabled) return false;
+        if (['hidden', 'file', 'password', 'submit', 'button'].includes(el.type)) return false;
+        return !NEVER_SAVE.test(el.name);
+      }
+      function readDraft() {
+        try {
+          const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+          if (!d || !d.fields || Date.now() - d.saved_at > DRAFT_TTL_MS) {
+            localStorage.removeItem(DRAFT_KEY);
+            return null;
+          }
+          return d;
+        } catch (_) { return null; }
+      }
+      function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (_) {} }
+
+      let saveTimer = null, draftLive = false;
+      // Submitted: clear it and stop saving, or the unload flush below would
+      // write the finished application straight back.
+      function retireDraft() { draftLive = false; clearTimeout(saveTimer); clearDraft(); }
+      window.__clearFormDraft = retireDraft;
+      form.addEventListener('submit', retireDraft);
+      function saveDraft() {
+        // Until the page has had its chance to restore, an early keystroke
+        // must not overwrite the stored draft with a near-empty one.
+        if (!draftLive) return;
+        // Only what the applicant changed: the page's own defaults (country,
+        // second owner "No") are not a draft, and saving them would bring the
+        // "we kept what you entered" notice back on an untouched form.
+        const fields = {};
+        Array.from(form.elements).forEach(el => {
+          if (!savable(el)) return;
+          if (el.type === 'checkbox' || el.type === 'radio') {
+            if (el.checked && !el.defaultChecked) fields[el.name] = el.value;
+          } else if (el.tagName === 'SELECT') {
+            const opt = el.options[el.selectedIndex];
+            const isDefault = opt && (opt.defaultSelected
+              || (el.selectedIndex === 0 && !Array.from(el.options).some(o => o.defaultSelected)));
+            if (el.value && !isDefault) fields[el.name] = el.value;
+          } else if (el.value && el.value !== el.defaultValue) {
+            fields[el.name] = el.value;
+          }
+        });
+        try {
+          if (Object.keys(fields).length) localStorage.setItem(DRAFT_KEY, JSON.stringify({ saved_at: Date.now(), fields }));
+          else localStorage.removeItem(DRAFT_KEY);
+        } catch (_) { /* storage full or blocked: autosave is a convenience */ }
+      }
+      function queueSave() { clearTimeout(saveTimer); saveTimer = setTimeout(saveDraft, 400); }
+      form.addEventListener('input', queueSave);
+      form.addEventListener('change', queueSave);
+
+      function applyDraft(d) {
+        const f = d.fields;
+        // The second-owner toggle first: its change handler enables or clears
+        // the owner-2 inputs, which would otherwise wipe what is put back.
+        const toggle = form.elements['has_owner_1'];
+        if (toggle && f.has_owner_1) {
+          toggle.value = f.has_owner_1;
+          toggle.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        let restored = 0;
+        Array.from(form.elements).forEach(el => {
+          if (!savable(el) || el.name === 'has_owner_1' || !(el.name in f)) return;
+          if (el.type === 'checkbox' || el.type === 'radio') el.checked = (el.value === f[el.name]);
+          else el.value = f[el.name];
+          restored++;
+        });
+        if (restored) showDraftNotice();
+      }
+
+      function showDraftNotice() {
+        if (document.getElementById('draftNotice')) return;
+        const n = document.createElement('div');
+        n.id = 'draftNotice';
+        n.className = 'draft-notice';
+        n.setAttribute('role', 'status');
+        n.innerHTML = '<span>We kept what you entered last time. For your security, '
+          + 'SSN, date of birth, EIN and signature need to be entered again.</span>'
+          + '<button type="button" class="draft-reset">Start over</button>';
+        n.querySelector('button').addEventListener('click', function () {
+          clearDraft();
+          form.reset();
+          const toggle = form.elements['has_owner_1'];
+          if (toggle) toggle.dispatchEvent(new Event('change', { bubbles: true }));
+          n.remove();
+        });
+        form.parentNode.insertBefore(n, form);
+      }
+
+      function restoreDraft() {
+        // A server re-render with errors already carries what they posted.
+        if (!hasErrors) { const d = readDraft(); if (d) applyDraft(d); }
+        draftLive = true;
+      }
+
       window.addEventListener('pageshow', function (e) {
-        if (!hasErrors && e.persisted) form.reset();
+        if (!hasErrors && e.persisted) { form.reset(); restoreDraft(); }
       });
       if (shouldResetOnLoad()) form.reset();
-      window.addEventListener('beforeunload', function () { try { form.reset(); } catch (_) {} });
+      restoreDraft();
+      window.addEventListener('beforeunload', function () {
+        // Flush a pending save before the reset empties the fields.
+        clearTimeout(saveTimer); saveDraft();
+        try { form.reset(); } catch (_) {}
+      });
     })();
 
     // ── Signature Pads ──
