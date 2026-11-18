@@ -824,6 +824,12 @@ label.inline{
   background:rgba(248,113,113,.25);
 }
 
+.sig-hint.sig-ok{
+  color:var(--success);
+  opacity:1;
+  font-weight:600;
+}
+
 .sig-hint{
   margin:6px 0 0 2px;
   font-size:12px;
