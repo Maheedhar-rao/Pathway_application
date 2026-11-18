@@ -215,6 +215,7 @@
   const EVENT_LABELS = {
     form_viewed:'Opened the form', form_step_viewed:'Reached a step',
     form_identity_captured:'Contact details entered',
+    form_step_blocked:'"Next" refused',
     form_abandoned:'Left without submitting', submission_rejected:'Submit blocked by validation',
     application_submitted:'Submitted the application', documents_uploaded:'Uploaded documents',
     thank_you_viewed:'Viewed thank-you page', resume_link_sent:'Credit-setup link sent',
@@ -539,7 +540,8 @@
                   ? esc(v.rep_code) + (v.rep_resolved === false
                       ? ' <span class="pill bad" title="code no longer resolves — recorded as Direct"><i></i>not credited</span>' : '')
                   : '<span class="mono">direct</span>'}</td>
-            <td class="num">step ${v.furthest_step}</td>
+            <td class="num">step ${v.furthest_step}${v.blocked && !v.application_id
+                  ? `<div class="mono" title="the last check that refused Next">stuck on ${esc(v.blocked.field || '?')} · ${esc(v.blocked.reason || '?')}</div>` : ''}</td>
             <td><span class="pill ${cls}"><i></i>${word}</span></td>
             <td>${docs}</td>
             <td>${idiq}</td>
@@ -558,6 +560,7 @@
       const p = e.payload || {};
       const bits = [];
       if (p.step) bits.push('step ' + p.step);
+      if (p.field) bits.push(p.field + (p.reason ? ' (' + p.reason + ')' : ''));
       if (e.rep_code) bits.push('link: ' + e.rep_code);
       if (p.rep_resolved === false) bits.push('rep code dropped');
       if (e.application_id) bits.push('#' + e.application_id);
