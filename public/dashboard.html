@@ -431,6 +431,7 @@
   const EVENT_LABELS = {
     form_viewed:              'Opened the application form',
     form_step_viewed:         'Reached a step',
+    form_step_blocked:        '"Next" refused',
     form_abandoned:           'Left without submitting',
     submission_rejected:      'Submit blocked by validation',
     application_submitted:    'Submitted the application',
@@ -475,6 +476,7 @@
     const p = e.payload || {};
     const bits = [];
     if (p.step) bits.push('step ' + p.step);
+    if (p.field) bits.push(p.field + (p.reason ? ' (' + p.reason + ')' : ''));
     if (p.client_name) bits.push(p.client_name);
     if (e.rep_code) bits.push('link: ' + e.rep_code);
     // Only a link that actually carried a code can have dropped one; a plain

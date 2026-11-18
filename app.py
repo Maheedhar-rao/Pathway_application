@@ -591,7 +591,20 @@ SESSION_VISIT_APP_KEY = "visit_app_id"
 # Event types the unauthenticated beacon (/api/activity) is allowed to write.
 # Anything else is dropped: the browser may only add to the trail in ways we
 # already expect, never forge an "application_submitted" that makes it lie.
-PUBLIC_EVENT_TYPES = {"form_step_viewed", "form_abandoned", "form_identity_captured"}
+PUBLIC_EVENT_TYPES = {"form_step_viewed", "form_abandoned", "form_identity_captured",
+                      "form_step_blocked"}
+
+# form_step_blocked: "Next" was pressed and the page refused. Records WHICH
+# check failed, never what was in the field -- the blocked field is as likely
+# to be the SSN as anything else. `field` is the input's name attribute,
+# shape-checked so the beacon cannot be used to write free text into the trail;
+# `reason` is a ValidityState flag name, or signature_missing for the pad gate.
+_BLOCKED_FIELD_RE = re.compile(r"^[a-z0-9_]{1,40}$")
+PUBLIC_BLOCK_REASONS = {
+    "valueMissing", "typeMismatch", "patternMismatch", "tooLong", "tooShort",
+    "rangeUnderflow", "rangeOverflow", "stepMismatch", "badInput", "customError",
+    "signature_missing",
+}
 
 # Page 1 asks for these five and requires every one of them, so a visit that
 # reaches page 2 has them filled and browser-validated. Captured there and
@@ -2668,6 +2681,13 @@ def api_activity():
         if not any(k in payload for k in PUBLIC_IDENTITY_FIELDS):
             return "", 204
 
+    if event_type == "form_step_blocked":
+        field = (request.form.get("field") or "").strip()
+        reason = (request.form.get("reason") or "").strip()
+        if not _BLOCKED_FIELD_RE.match(field) or reason not in PUBLIC_BLOCK_REASONS:
+            return "", 204
+        payload["field"], payload["reason"] = field, reason
+
     log_event(event_type, visit_id=visit_id, payload=payload,
               application_id=session.get(SESSION_VISIT_APP_KEY))
     return "", 204
@@ -4359,6 +4379,7 @@ def _summarize_visits(rows: list, include_automated: bool = False) -> dict:
             "rep_resolved": None, "ip": None, "user_agent": None, "events": 0,
             "step_views": 0, "doc_files": 0, "doc_types": [], "idiq": None,
             "credit_setup_opens": 0, "automated": False, "identity": None,
+            "blocked": None,
         })
         v["events"] += 1
         if r["event_type"] == "form_step_viewed":
@@ -4386,6 +4407,9 @@ def _summarize_visits(rows: list, include_automated: bool = False) -> dict:
             captured = {k: payload[k] for k in PUBLIC_IDENTITY_FIELDS if payload.get(k)}
             if captured:
                 v["identity"] = captured
+        if r["event_type"] == "form_step_blocked":
+            # Latest wins: the last refusal is the one they gave up on.
+            v["blocked"] = {k: payload.get(k) for k in ("step", "field", "reason")}
         if r["event_type"] == "form_abandoned":
             v["abandoned"] = True
         if r["event_type"] == "application_submitted":

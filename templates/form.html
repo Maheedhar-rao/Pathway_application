@@ -712,6 +712,26 @@
         }
       }
 
+      // Why "Next" was refused, so a drop-off on a page can be explained
+      // afterwards. The field's name and the kind of failure only -- never
+      // its value: the failing field is as likely to be the SSN as anything.
+      const VALIDITY_FLAGS = ['valueMissing', 'typeMismatch', 'patternMismatch',
+        'tooLong', 'tooShort', 'rangeUnderflow', 'rangeOverflow', 'stepMismatch',
+        'badInput', 'customError'];
+      function validityReason(el) {
+        const v = el.validity || {};
+        return VALIDITY_FLAGS.find(f => v[f]) || 'customError';
+      }
+      // Repeat taps on the same failure say nothing new and would eat the
+      // visit's beacon budget, so only a change of failure is sent.
+      let lastBlocked = '';
+      function reportBlocked(field, reason) {
+        const key = current + '|' + field + '|' + reason;
+        if (!field || key === lastBlocked) return;
+        lastBlocked = key;
+        beacon('form_step_blocked', { step: current, field: field, reason: reason });
+      }
+
       function validateCurrentPage() {
         const page = pageByNum(current);
         if (!page) return true;
@@ -724,6 +744,7 @@
           }
         }
         if (firstInvalid) {
+          reportBlocked(firstInvalid.name || firstInvalid.id, validityReason(firstInvalid));
           firstInvalid.reportValidity();
           firstInvalid.focus();
           return false;
@@ -732,6 +753,7 @@
         if (current === 3) {
           const sig = window.__primarySignaturePad;
           if (sig && !sig.isSigned()) {
+            reportBlocked('signature_data', 'signature_missing');
             alert('Please sign the application before continuing.');
             sig.canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
             return false;
@@ -743,6 +765,7 @@
           if (toggle && toggle.value === 'Yes') {
             const sig2 = window.__owner1SignaturePad;
             if (sig2 && !sig2.isSigned()) {
+              reportBlocked('owner_1_signature_data', 'signature_missing');
               alert('Please have the Second Owner sign the application before continuing.');
               sig2.canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
               return false;
