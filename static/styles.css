@@ -774,86 +774,68 @@ label.inline{
   transform:translateY(0);
 }
 
-/* ── Signature Pad ── */
-.signature-section{
-  margin-top:16px;
-}
+/* ── Adopted signature (typed name in a chosen script style) ──
+   Fonts are self-hosted and are the same files the server draws into the PDF. */
+@font-face{font-family:'Sig Great Vibes';src:url('/static/fonts/GreatVibes-Regular.ttf') format('truetype');font-display:block}
+@font-face{font-family:'Sig Allura';src:url('/static/fonts/Allura-Regular.ttf') format('truetype');font-display:block}
+@font-face{font-family:'Sig Sacramento';src:url('/static/fonts/Sacramento-Regular.ttf') format('truetype');font-display:block}
 
-.sig-pad-wrap{
+.adopt-sig{ margin-top:16px; }
+
+.sig-styles{
+  display:grid;
+  grid-template-columns:repeat(3, minmax(0,1fr));
+  gap:10px;
+  margin-top:8px;
+}
+@media(max-width:700px){ .sig-styles{ grid-template-columns:minmax(0,1fr); } }
+
+.sig-style{
   position:relative;
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:4px;
+  min-height:96px;
+  padding:14px 12px 10px;
   border:2px solid rgba(148,163,184,.25);
   border-radius:14px;
+  background:rgba(15,23,42,.6);
+  cursor:pointer;
+  transition:border-color .15s, box-shadow .15s, background .15s;
+}
+.sig-style:hover{ border-color:rgba(96,165,250,.5); }
+.sig-style input[type=radio]{ position:absolute; opacity:0; pointer-events:none; }
+.sig-style:has(input:checked){
+  border-color:var(--success);
+  background:rgba(52,211,153,.08);
+  box-shadow:0 0 0 4px rgba(52,211,153,.15);
+}
+.sig-style:has(input:focus-visible){ box-shadow:0 0 0 4px var(--ring); }
+.sig-preview{
+  font-size:34px;
+  line-height:1.2;
+  color:var(--text);
+  white-space:nowrap;
   overflow:hidden;
-  background:rgba(15,23,42,.75);
-  touch-action:none;
-}
-
-.sig-pad-wrap canvas{
-  display:block;
   width:100%;
-  height:180px;
-  cursor:crosshair;
+  text-align:center;
+  padding:0 6px;          /* room for script swashes past the last glyph */
+  box-sizing:border-box;
 }
-
-.sig-pad-wrap.has-sig{
-  border-color:rgba(52,211,153,.4);
-}
-
-.sig-pad-wrap.signing{
-  border-color:rgba(96,165,250,.6);
-  box-shadow:0 0 0 4px var(--ring);
-}
-
-.btn-clear-sig{
-  position:absolute;
-  top:8px;
-  right:8px;
-  background:rgba(248,113,113,.15);
-  color:var(--danger);
-  border:1px solid rgba(248,113,113,.3);
-  padding:5px 12px;
-  border-radius:8px;
-  font-size:12px;
-  font-weight:600;
-  cursor:pointer;
-  transition:background .15s;
-  z-index:2;
-}
-
-.btn-clear-sig:hover{
-  background:rgba(248,113,113,.25);
-}
-
-.sig-typed-btn{
-  display:inline-block;
-  margin:8px 0 0 2px;
-  padding:0;
-  background:none;
-  border:0;
-  color:var(--primary2);
-  font-size:13px;
-  font-weight:600;
-  text-decoration:underline;
-  cursor:pointer;
-}
-
-.sig-hint.sig-ok{
-  color:var(--success);
-  opacity:1;
-  font-weight:600;
-}
-
-.sig-hint{
-  margin:6px 0 0 2px;
-  font-size:12px;
+.adopt-sig:not(.has-name) .sig-preview{ opacity:.45; }
+.sig-style-name{
+  font-size:11px;
+  letter-spacing:.04em;
+  text-transform:uppercase;
   color:var(--muted);
-  opacity:.7;
 }
-
-@media(max-width:900px){
-  .sig-pad-wrap canvas{
-    height:150px;
-  }
+.sig-adopt-note{
+  margin:10px 0 0 2px;
+  font-size:13px;
+  color:var(--muted);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1086,17 +1068,6 @@ input:invalid:focus, select:invalid:focus, textarea:invalid:focus {
 @keyframes dotPulse {
   0%,100% { transform: scale(1); opacity: .25; }
   50%     { transform: scale(1.6); opacity: 0; }
-}
-
-/* ── Signature pad: inviting empty state ── */
-.sig-pad-wrap {
-  transition: border-color .25s, box-shadow .25s, transform .15s;
-}
-.sig-pad-wrap:hover:not(.signing) {
-  border-color: rgba(96,165,250,.5);
-}
-.sig-pad-wrap.has-sig {
-  box-shadow: 0 0 0 4px rgba(52,211,153,.15);
 }
 
 /* ── Card-header pill: subtle gradient sweep when active step ── */

@@ -435,6 +435,7 @@
     form_abandoned:           'Left without submitting',
     submission_rejected:      'Submit blocked by validation',
     application_submitted:    'Submitted the application',
+    signature_adopted:        'Adopted e-signature',
     documents_uploaded:       'Uploaded documents',
     thank_you_viewed:         'Viewed the thank-you page',
     resume_link_sent:         'Credit-setup link sent',
@@ -477,6 +478,7 @@
     const bits = [];
     if (p.step) bits.push('step ' + p.step);
     if (p.field) bits.push(p.field + (p.reason ? ' (' + p.reason + ')' : ''));
+    if (p.font) bits.push((p.owner ? 'second owner, ' : '') + 'style: ' + p.font);
     if (p.client_name) bits.push(p.client_name);
     if (e.rep_code) bits.push('link: ' + e.rep_code);
     // Only a link that actually carried a code can have dropped one; a plain

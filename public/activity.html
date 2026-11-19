@@ -217,7 +217,7 @@
     form_identity_captured:'Contact details entered',
     form_step_blocked:'"Next" refused',
     form_abandoned:'Left without submitting', submission_rejected:'Submit blocked by validation',
-    application_submitted:'Submitted the application', documents_uploaded:'Uploaded documents',
+    application_submitted:'Submitted the application', signature_adopted:'Adopted e-signature', documents_uploaded:'Uploaded documents',
     thank_you_viewed:'Viewed thank-you page', resume_link_sent:'Credit-setup link sent',
     resume_link_requested:'Asked for a replacement link', resume_link_opened:'Opened credit-setup link',
     resume_link_rejected:'Followed a dead link', credit_setup_viewed:'Viewed credit setup',
@@ -561,6 +561,7 @@
       const bits = [];
       if (p.step) bits.push('step ' + p.step);
       if (p.field) bits.push(p.field + (p.reason ? ' (' + p.reason + ')' : ''));
+      if (p.font) bits.push((p.owner ? 'second owner, ' : '') + 'style: ' + p.font);
       if (e.rep_code) bits.push('link: ' + e.rep_code);
       if (p.rep_resolved === false) bits.push('rep code dropped');
       if (e.application_id) bits.push('#' + e.application_id);

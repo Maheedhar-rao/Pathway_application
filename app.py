@@ -31,6 +31,7 @@ from zoneinfo import ZoneInfo
 from io import BytesIO
 from pathlib import Path
 from typing import List, Optional
+from xml.sax.saxutils import escape as xml_escape
 
 import socket as _socket
 
@@ -551,6 +552,24 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("APP_SECRET", "dev-secret")
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB upload cap
 
+# Adopted signatures, the CrocSign model: the signer's typed legal name in one
+# of these script styles is their signature. (style name, CSS family the form
+# previews with, font file the PDF draws with) -- the form and the PDF use the
+# same files in static/fonts, so what the applicant picks is what gets printed.
+# The first entry is the default. All three are SIL Open Font License.
+SIGNATURE_FONTS = [
+    ("Great Vibes", "Sig Great Vibes", "GreatVibes-Regular.ttf"),
+    ("Allura",      "Sig Allura",      "Allura-Regular.ttf"),
+    ("Sacramento",  "Sig Sacramento",  "Sacramento-Regular.ttf"),
+]
+SIGNATURE_FONT_NAMES = [f[0] for f in SIGNATURE_FONTS]
+app.jinja_env.globals["SIGNATURE_FONTS"] = [(f[0], f[1]) for f in SIGNATURE_FONTS]
+
+
+def signature_font(value: Optional[str]) -> str:
+    """The submitted style if it is one we offer, else the default."""
+    return value if value in SIGNATURE_FONT_NAMES else SIGNATURE_FONT_NAMES[0]
+
 # Railway terminates TLS at the edge and forwards plain HTTP to this app.
 # Without ProxyFix, request.host_url returns http://... — which made the rep
 # tracking links rendered on /admin/reps come out as insecure URLs. Trust the
@@ -741,6 +760,21 @@ def attach_visit_to_application(visit_id: Optional[str], sid: int) -> None:
         ).eq("visit_id", visit_id).is_("application_id", "null").execute()
     except Exception:
         log.exception("Failed to attach visit %s to application %s", visit_id, sid)
+
+
+def log_signature_adoptions(form: dict, application_id: int, visit_id: Optional[str]) -> None:
+    """Audit row per adopted signature, the CrocSign pattern: which owner
+    adopted a signature in which style, on what date, from where (log_event
+    adds ip and user agent). The name itself stays on the application record,
+    not in the trail -- audit payloads carry metadata, never what was typed."""
+    owners = [("signature", 0)]
+    if (form.get("has_owner_1") or "No").strip() == "Yes":
+        owners.append(("owner_1_signature", 1))
+    for prefix, owner in owners:
+        log_event("signature_adopted", application_id=application_id, visit_id=visit_id,
+                  payload={"owner": owner, "method": "typed",
+                           "font": signature_font(form.get(prefix + "_font")),
+                           "date": form.get(prefix + "_date") or None})
 
 
 def fetch_application_events(sid: int, limit: int = 500) -> list:
@@ -982,6 +1016,72 @@ def _submission_record_rows(sid: int) -> tuple[list, dict]:
     return rows, ctx
 
 
+_registered_sig_fonts: dict = {}
+
+
+def _sig_pdf_font(style: str) -> Optional[str]:
+    """Register the style's TTF with ReportLab once; return its PDF font name."""
+    style = signature_font(style)
+    if style in _registered_sig_fonts:
+        return _registered_sig_fonts[style]
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    file_name = next(f[2] for f in SIGNATURE_FONTS if f[0] == style)
+    pdf_name = "Sig-" + style.replace(" ", "")
+    try:
+        pdfmetrics.registerFont(TTFont(pdf_name, str(APP_DIR / "static" / "fonts" / file_name)))
+    except Exception:
+        # A missing or unreadable font file must not turn into an unsigned
+        # PDF: the signature still prints, in a standard italic face.
+        log.exception("Could not load signature font %s; using Helvetica-Oblique", file_name)
+        pdf_name = "Helvetica-Oblique"
+    _registered_sig_fonts[style] = pdf_name
+    return pdf_name
+
+
+def _adopted_signature_flowables(name: str, style: str, label: str, label_style) -> list:
+    """The adopted signature: the typed legal name drawn in the chosen script
+    face, sitting on its own signature line -- the PDF twin of the form's preview."""
+    name = (name or "").strip()
+    if not name:
+        return []
+    pdf_font = _sig_pdf_font(style)
+    from reportlab.pdfbase import pdfmetrics
+    # Shrink to fit one line inside the page's text frame (7.3in wide): a long
+    # legal name must stay on its signature line, never wrap or run off the page.
+    size = 30
+    max_w = 3.6 * inch
+    while size > 14 and pdfmetrics.stringWidth(name, pdf_font, size) > max_w:
+        size -= 1
+    frame_w = 7.0 * inch
+    while size > 6 and pdfmetrics.stringWidth(name, pdf_font, size) > frame_w:
+        size -= 0.5
+    sig_style = ParagraphStyle("AdoptedSig", fontName=pdf_font, fontSize=size,
+                               leading=size * 1.25, textColor=BRAND_DARK)
+    width = pdfmetrics.stringWidth(name, pdf_font, size)
+    return [
+        Spacer(1, 6),
+        Paragraph(xml_escape(name), sig_style),
+        HRFlowable(width=min(max(width, 2.8 * inch), frame_w), thickness=0.5, color=BRAND_DARK,
+                   hAlign="LEFT", spaceBefore=0, spaceAfter=4),
+        Paragraph(label, label_style),
+    ]
+
+
+def _signature_block(form_data: dict, prefix: str, label: str, label_style) -> list:
+    """Adopted (typed) signature; a drawn image only for applications submitted
+    before the drawing pad was retired, so their PDFs still render as signed."""
+    if form_data.get(prefix + "_data"):
+        return _signature_flowables(form_data[prefix + "_data"], label, label_style)
+    # No style recorded means no signature was adopted (an older application
+    # whose pad was empty): print nothing rather than invent a signature from
+    # the printed name.
+    if not form_data.get(prefix + "_font"):
+        return []
+    return _adopted_signature_flowables(form_data.get(prefix + "_print_name", ""),
+                                        form_data.get(prefix + "_font", ""), label, label_style)
+
+
 def _signature_flowables(sig_data: str, label: str, label_style) -> list:
     """Signature image sitting on its own signature line.
 
@@ -1205,9 +1305,8 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
     ]
     elements.append(_styled_section_table(sig_info))
 
-    # Render hand signature image
-    elements.extend(_signature_flowables(
-        form_data.get("signature_data", ""), "Applicant Signature",
+    elements.extend(_signature_block(
+        form_data, "signature", "Applicant Signature",
         ParagraphStyle('SigLabel', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY),
     ))
 
@@ -1220,8 +1319,8 @@ def generate_application_pdf(form_data: dict, submission_id: int, rep_name: str 
         ]
         elements.append(_styled_section_table(owner1_sig_info))
 
-        elements.extend(_signature_flowables(
-            form_data.get("owner_1_signature_data", ""), "Second Owner Signature",
+        elements.extend(_signature_block(
+            form_data, "owner_1_signature", "Second Owner Signature",
             ParagraphStyle('SigLabel2', parent=styles['Normal'], fontSize=9, textColor=BRAND_GRAY),
         ))
 
@@ -2102,11 +2201,16 @@ def validate_fields(form: dict) -> dict:
         'owner_0_first','owner_0_last','owner_0_pct','owner_0_dob','owner_0_ssn','owner_0_email','owner_0_mobile',
         'own_real_estate','own_home_location','own_business_location',
         'esign_consent','esign_act_consent',
-        'signature_data','signature_date','signature_print_name',
+        'signature_date','signature_print_name',
     ]
     for k in req:
         if not form.get(k):
             errors[k] = 'Required'
+
+    # The signature is the adopted one: the required legal name above in a
+    # chosen style. Normalised in place so the PDF and the audit event see the
+    # style that was actually applied, never an unknown value.
+    form['signature_font'] = signature_font(form.get('signature_font'))
 
 
     # Second owner conditional required fields
@@ -2116,11 +2220,12 @@ def validate_fields(form: dict) -> dict:
             'owner_1_first','owner_1_last','owner_1_pct','owner_1_dob','owner_1_ssn',
             'owner_1_email','owner_1_mobile',
             'owner_1_addr1','owner_1_city','owner_1_state','owner_1_zip',
-            'owner_1_signature_data','owner_1_signature_date','owner_1_signature_print_name',
+            'owner_1_signature_date','owner_1_signature_print_name',
         ]
         for k in owner1_req:
             if not form.get(k):
                 errors[k] = 'Required'
+        form['owner_1_signature_font'] = signature_font(form.get('owner_1_signature_font'))
 
     # Pattern validations
     if form.get('ein') and not EIN_RE.match(form['ein']):
@@ -2523,6 +2628,7 @@ def submit_application():
               payload={"loan_amount": loan_amount, "owners": len(owners),
                        "path": "wizard",
                        **({"rep_resolved": bool(rep_info)} if rep_code else {})})
+    log_signature_adoptions(form, submission_id, visit_id)
 
     # Lead summary to the rep and the internal inboxes — independent of the
     # PDF pipeline, and the only application email a rep receives.
@@ -2879,6 +2985,7 @@ def submit():
               payload={"loan_amount": loan_amount, "owners": len(owners),
                        "path": "legacy",
                        **({"rep_resolved": bool(rep_info)} if rep_code else {})})
+    log_signature_adoptions(form, submission_id, visit_id)
 
     # Lead summary to the rep and the internal inboxes — independent of the
     # PDF pipeline, and the only application email a rep receives.
