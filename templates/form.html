@@ -19,6 +19,43 @@
     {% endfor %}
   </select>
 {%- endmacro %}
+{#
+  Adopted signature, the CrocSign model: the signer types their legal name and
+  picks a script style; the name in that style IS the signature. Nothing is
+  drawn, so no device or browser quirk can stand between an applicant and a
+  signature -- only a missing name can, and that is an ordinary required field.
+  The server renders the same font file into the PDF (SIGNATURE_FONTS in app.py).
+#}
+{% macro adopt_signature(prefix, owner, form, required=False) -%}
+  {% set chosen = (form.get(prefix ~ '_font') if form else '') or SIGNATURE_FONTS[0][0] %}
+  <div class="adopt-sig" data-prefix="{{ prefix }}" data-owner="{{ owner }}">
+    <div class="grid cols-2" style="gap:20px;align-items:start;">
+      <div class="field">
+        <label>Full Legal Name <span style="color:var(--danger);">*</span></label>
+        <input name="{{ prefix }}_print_name" class="adopt-name" placeholder="Type your full legal name"
+               autocomplete="name" value="{{ (form.get(prefix ~ '_print_name') if form else '') }}"
+               {% if required %}required{% endif %} />
+      </div>
+      <div class="field">
+        <label>Date of Signature <span style="color:var(--danger);">*</span></label>
+        <input type="date" name="{{ prefix }}_date" class="adopt-date"
+               value="{{ (form.get(prefix ~ '_date') if form else '') }}" {% if required %}required{% endif %} />
+      </div>
+    </div>
+    <label style="margin-top:14px;display:block">Choose your signature style</label>
+    <div class="sig-styles" role="radiogroup" aria-label="Signature style">
+      {% for name, css in SIGNATURE_FONTS %}
+      <label class="sig-style">
+        <input type="radio" name="{{ prefix }}_font" value="{{ name }}" {% if name == chosen %}checked{% endif %} />
+        <span class="sig-preview" style="font-family:'{{ css }}',cursive">Your Name</span>
+        <span class="sig-style-name">{{ name }}</span>
+      </label>
+      {% endfor %}
+    </div>
+    <p class="sig-adopt-note">By tapping <strong>Next</strong>, you adopt the name and style above as your
+      electronic signature on this application.</p>
+  </div>
+{%- endmacro %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -376,30 +413,7 @@
           </div>
 
           <div class="section-title"><span class="dot"></span><h3>Primary Owner Signature</h3></div>
-          <div class="signature-section">
-            <div class="grid cols-2" style="gap:20px;align-items:start;">
-              <div class="field">
-                <label>Sign Below <span style="color:var(--danger);">*</span></label>
-                <div class="sig-pad-wrap">
-                  <canvas id="signatureCanvas" width="480" height="180"></canvas>
-                  <button type="button" id="clearSigBtn" class="btn-clear-sig" title="Clear signature">Clear</button>
-                </div>
-                <input type="hidden" name="signature_data" id="signatureData" required />
-                <p class="sig-hint">Use your mouse or finger to sign above</p>
-              </div>
-              <div class="field">
-                <label>Date of Signature <span style="color:var(--danger);">*</span></label>
-                <input type="date" name="signature_date" id="signatureDate"
-                       value="{{ (form.get('signature_date') if form else '') }}" required />
-                <div style="margin-top:16px;">
-                  <label>Print Name <span style="color:var(--danger);">*</span></label>
-                  <input name="signature_print_name"
-                         placeholder="Full legal name"
-                         value="{{ (form.get('signature_print_name') if form else '') }}" required />
-                </div>
-              </div>
-            </div>
-          </div>
+          {{ adopt_signature('signature', 'owner_0', form, required=True) }}
         </div>
         <div class="actions">
           <button type="button" class="btn ghost" data-nav="prev">Back</button>
@@ -488,30 +502,7 @@
             </div>
 
             <div class="section-title"><span class="dot"></span><h3>Second Owner Signature</h3></div>
-            <div class="signature-section">
-              <div class="grid cols-2" style="gap:20px;align-items:start;">
-                <div class="field">
-                  <label>Sign Below <span style="color:var(--danger);">*</span></label>
-                  <div class="sig-pad-wrap">
-                    <canvas id="signatureCanvas1" width="480" height="180"></canvas>
-                    <button type="button" id="clearSigBtn1" class="btn-clear-sig" title="Clear signature">Clear</button>
-                  </div>
-                  <input type="hidden" name="owner_1_signature_data" id="signatureData1" />
-                  <p class="sig-hint">Use your mouse or finger to sign above</p>
-                </div>
-                <div class="field">
-                  <label>Date of Signature <span style="color:var(--danger);">*</span></label>
-                  <input type="date" name="owner_1_signature_date" id="signatureDate1"
-                         value="{{ (form.get('owner_1_signature_date') if form else '') }}" />
-                  <div style="margin-top:16px;">
-                    <label>Print Name <span style="color:var(--danger);">*</span></label>
-                    <input name="owner_1_signature_print_name" id="signaturePrintName1"
-                           placeholder="Full legal name"
-                           value="{{ (form.get('owner_1_signature_print_name') if form else '') }}" />
-                  </div>
-                </div>
-              </div>
-            </div>
+            {{ adopt_signature('owner_1_signature', 'owner_1', form, required=True) }}
           </div>
 
           <div class="section-title" style="margin-top:24px"><span class="dot"></span><h3>Authorization</h3></div>
@@ -703,13 +694,7 @@
         // Scroll progress bar / page top into view
         window.scrollTo({ top: 0, behavior: 'smooth' });
 
-        // Re-measure signature canvases when their page becomes visible —
-        // a 0×0 canvas captured while display:none would otherwise persist.
-        if (n === 3 && window.__primarySignaturePad) window.__primarySignaturePad.rescale();
-        if (n === 4 && window.__owner1SignaturePad) {
-          const owner1Sel = document.getElementById('has_owner_1');
-          if (owner1Sel && owner1Sel.value === 'Yes') window.__owner1SignaturePad.rescale();
-        }
+        if (window.__adoptSignatureSync) window.__adoptSignatureSync(n === 3 ? 'owner_0' : n === 4 ? 'owner_1' : null);
       }
 
       // Why "Next" was refused, so a drop-off on a page can be explained
@@ -732,20 +717,6 @@
         beacon('form_step_blocked', { step: current, field: field, reason: reason });
       }
 
-      // The pad is empty but every field on the page passed, so the printed
-      // name is filled in (it is required). Offer it as the signature rather
-      // than refusing: a drawing pad that will not take someone's finger must
-      // never be what stops an application. Returns true once signed.
-      function offerTypedSignature(pad, printName, field) {
-        const name = fieldValue(printName);
-        const ok = name && confirm('No drawn signature was detected.\n\n'
-          + 'Use your typed name "' + name + '" as your electronic signature?\n\n'
-          + 'OK = sign with typed name    Cancel = draw it instead');
-        if (ok && pad.adoptTyped(name) && pad.isSigned()) return true;
-        reportBlocked(field, 'signature_missing');
-        return false;
-      }
-
       function validateCurrentPage() {
         const page = pageByNum(current);
         if (!page) return true;
@@ -762,25 +733,6 @@
           firstInvalid.reportValidity();
           firstInvalid.focus();
           return false;
-        }
-        // Owner-1 signature gate on page 3
-        if (current === 3) {
-          const sig = window.__primarySignaturePad;
-          if (sig && !sig.isSigned() && !offerTypedSignature(sig, 'signature_print_name', 'signature_data')) {
-            sig.canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            return false;
-          }
-        }
-        // Owner-2 signature gate on page 4 (only if "Yes")
-        if (current === 4) {
-          const toggle = document.getElementById('has_owner_1');
-          if (toggle && toggle.value === 'Yes') {
-            const sig2 = window.__owner1SignaturePad;
-            if (sig2 && !sig2.isSigned() && !offerTypedSignature(sig2, 'owner_1_signature_print_name', 'owner_1_signature_data')) {
-              sig2.canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              return false;
-            }
-          }
         }
         return true;
       }
@@ -917,24 +869,13 @@
         owner1Inputs.forEach(el => {
           el.disabled = !show;
           if (!show && (el.type === 'checkbox' || el.type === 'radio')) el.checked = false;
-          if (!show && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.type !== 'hidden') el.value = '';
+          // Checkboxes and radios are unchecked above; their value is the
+          // option itself (e.g. a signature style), not something typed.
+          if (!show && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')
+              && !['hidden', 'checkbox', 'radio'].includes(el.type)) el.value = '';
           if (!show && el.tagName === 'SELECT') el.selectedIndex = 0;
         });
-        const pad = window.__owner1SignaturePad;
-        if (pad) {
-          if (!show) {
-            pad.clear();
-          } else {
-            pad.rescale();
-            if (pad.dateInput && !pad.dateInput.value) {
-              const now = new Date();
-              const y = now.getFullYear();
-              const m = String(now.getMonth() + 1).padStart(2, '0');
-              const d = String(now.getDate()).padStart(2, '0');
-              pad.dateInput.value = y + '-' + m + '-' + d;
-            }
-          }
-        }
+        if (window.__adoptSignatureSync) window.__adoptSignatureSync('owner_1', show);
       }
 
       sel.addEventListener('change', updateOwner1);
@@ -1057,7 +998,7 @@
         n.className = 'draft-notice';
         n.setAttribute('role', 'status');
         n.innerHTML = '<span>We kept what you entered last time. For your security, '
-          + 'SSN, date of birth, EIN and signature need to be entered again.</span>'
+          + 'SSN, date of birth and EIN need to be entered again.</span>'
           + '<button type="button" class="draft-reset">Start over</button>';
         n.querySelector('button').addEventListener('click', function () {
           clearDraft();
@@ -1087,214 +1028,62 @@
       });
     })();
 
-    // ── Signature Pads ──
+    // ── Adopted signature (see the adopt_signature macro) ──
+    // The signature is the typed legal name in the chosen script style. This
+    // only keeps the previews in step with the name, fills today's date and
+    // the owner's name when the page opens, and makes sure a style is always
+    // picked -- so a signature exists the moment the name does.
     (function () {
-      function initSignaturePad(canvasId, hiddenId, clearBtnId, dateId, printName) {
-        const canvas = document.getElementById(canvasId);
-        const hiddenInput = document.getElementById(hiddenId);
-        const clearBtn = document.getElementById(clearBtnId);
-        const dateInput = dateId ? document.getElementById(dateId) : null;
-        const wrap = canvas ? canvas.parentElement : null;
-        if (!canvas || !hiddenInput) return null;
-
-        const ctx = canvas.getContext('2d');
-        let drawing = false;
-        let hasSigned = false;
-
-        function scaleCanvas() {
-          canvas.style.width = '';
-          canvas.style.height = '';
-          const rect = canvas.getBoundingClientRect();
-          const dpr = window.devicePixelRatio || 1;
-          canvas.width = rect.width * dpr;
-          canvas.height = rect.height * dpr;
-          ctx.scale(dpr, dpr);
-          canvas.style.width = rect.width + 'px';
-          canvas.style.height = rect.height + 'px';
-          ctx.strokeStyle = '#e2e8f0';
-          ctx.lineWidth = 2.5;
-          ctx.lineCap = 'round';
-          ctx.lineJoin = 'round';
-        }
-        scaleCanvas();
-        window.addEventListener('resize', function () {
-          const data = hasSigned ? canvas.toDataURL('image/png') : null;
-          scaleCanvas();
-          if (data && hasSigned) {
-            const img = new window.Image();
-            img.onload = function () {
-              const rect = canvas.getBoundingClientRect();
-              ctx.drawImage(img, 0, 0, rect.width, rect.height);
-            };
-            img.src = data;
-          }
-        });
-
-        if (dateInput && !dateInput.value) {
-          const now = new Date();
-          const y = now.getFullYear();
-          const m = String(now.getMonth() + 1).padStart(2, '0');
-          const d = String(now.getDate()).padStart(2, '0');
-          dateInput.value = y + '-' + m + '-' + d;
-        }
-
-        // Status line under the pad: the applicant sees the signature was
-        // taken BEFORE pressing Next, instead of finding out from an alert.
-        const hint = wrap && wrap.parentElement ? wrap.parentElement.querySelector('.sig-hint') : null;
-        const HINT_EMPTY = 'Draw your signature in the box above with your finger or mouse';
-        function setStatus() {
-          if (!hint) return;
-          hint.textContent = hasSigned ? 'Signature captured ✓  (tap Clear to redo)' : HINT_EMPTY;
-          hint.classList.toggle('sig-ok', hasSigned);
-        }
-        setStatus();
-
-        function getPos(e) {
-          const rect = canvas.getBoundingClientRect();
-          const pt = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
-          return { x: pt.clientX - rect.left, y: pt.clientY - rect.top };
-        }
-        // Store the drawing in the form field. Called after every stroke AND
-        // from isSigned(): if a browser never delivers the end-of-stroke
-        // event (iOS can swallow touchend/pointerup), the ink on the canvas
-        // still counts instead of the pad looking signed but being refused.
-        function commit() {
-          if (!hasSigned) return;
-          try { hiddenInput.value = canvas.toDataURL('image/png'); } catch (_) {}
-          if (wrap) wrap.classList.add('has-sig');
-          setStatus();
-        }
-        function startDraw(e) {
-          if (e.cancelable) e.preventDefault();
-          drawing = true;
-          if (wrap) wrap.classList.add('signing');
-          const pos = getPos(e);
-          // A dot where the finger lands, so even a tap leaves visible ink
-          // and counts -- a very short or shaky signature used to register
-          // as "not signed" because only movement drew anything.
-          ctx.beginPath(); ctx.arc(pos.x, pos.y, ctx.lineWidth / 2, 0, Math.PI * 2);
-          ctx.fillStyle = ctx.strokeStyle; ctx.fill();
-          ctx.beginPath(); ctx.moveTo(pos.x, pos.y);
-          hasSigned = true;
-        }
-        function draw(e) {
-          if (!drawing) return;
-          if (e.cancelable) e.preventDefault();
-          const pos = getPos(e);
-          ctx.lineTo(pos.x, pos.y); ctx.stroke();
-          hasSigned = true;
-        }
-        function endDraw(e) {
-          if (!drawing) return;
-          if (e && e.cancelable) e.preventDefault();
-          drawing = false;
-          if (wrap) wrap.classList.remove('signing');
-          commit();
-        }
-        function clearPad() { const rect = canvas.getBoundingClientRect();
-          ctx.clearRect(0, 0, rect.width, rect.height); hasSigned = false; hiddenInput.value = '';
-          if (wrap) wrap.classList.remove('has-sig'); setStatus(); }
-
-        if (window.PointerEvent) {
-          // One path for finger, pen and mouse. Pointer capture keeps the
-          // stroke attached to the pad when the finger slides off its edge,
-          // and touch-action:none on the wrapper stops Safari turning the
-          // stroke into a page scroll.
-          canvas.addEventListener('pointerdown', function (e) {
-            if (e.button > 0) return;
-            try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
-            startDraw(e);
-          });
-          canvas.addEventListener('pointermove', draw);
-          canvas.addEventListener('pointerup', endDraw);
-          canvas.addEventListener('pointercancel', endDraw);
-          canvas.addEventListener('lostpointercapture', endDraw);
-        } else {
-          canvas.addEventListener('mousedown', startDraw);
-          canvas.addEventListener('mousemove', draw);
-          canvas.addEventListener('mouseup', endDraw);
-          canvas.addEventListener('mouseleave', endDraw);
-          canvas.addEventListener('touchstart', startDraw, { passive: false });
-          canvas.addEventListener('touchmove', draw, { passive: false });
-          canvas.addEventListener('touchend', endDraw);
-          canvas.addEventListener('touchcancel', endDraw);
-        }
-        canvas.style.touchAction = 'none';
-        if (clearBtn) clearBtn.addEventListener('click', clearPad);
-
-        function rescale() {
-          const data = hasSigned ? canvas.toDataURL('image/png') : null;
-          scaleCanvas();
-          if (data && hasSigned) {
-            const img = new window.Image();
-            img.onload = function () {
-              const rect = canvas.getBoundingClientRect();
-              ctx.drawImage(img, 0, 0, rect.width, rect.height);
-            };
-            img.src = data;
-          }
-        }
-
-        const api = {
-          canvas: canvas, hiddenInput: hiddenInput, dateInput: dateInput,
-          isSigned: function () {
-            if (drawing) { drawing = false; if (wrap) wrap.classList.remove('signing'); }
-            if (hasSigned && !hiddenInput.value) commit();
-            return hasSigned && !!hiddenInput.value;
-          },
-          clear: clearPad, rescale: rescale, adoptTyped: adoptTyped,
-        };
-
-        // Typed signature: the applicant's printed name, written into the pad
-        // in a script face and stored exactly like a drawn one, so the PDF and
-        // the server see no difference. Only ever applied on the applicant's
-        // explicit say-so (the link under the pad, or OK on the prompt when
-        // Next finds the pad empty) -- the drawing pad can never be the reason
-        // an application cannot go through.
-        function adoptTyped(name) {
-          name = (name || '').trim();
-          if (!name) return false;
-          let rect = canvas.getBoundingClientRect();
-          if (!rect.width || !rect.height) { rescale(); rect = canvas.getBoundingClientRect(); }
-          if (!rect.width || !rect.height) return false;
-          ctx.clearRect(0, 0, rect.width, rect.height);
-          const face = "'Snell Roundhand','Apple Chancery','Brush Script MT','Segoe Script',cursive";
-          let size = Math.min(56, rect.height * 0.45);
-          ctx.font = 'italic ' + size + 'px ' + face;
-          while (size > 14 && ctx.measureText(name).width > rect.width * 0.85) {
-            size -= 2; ctx.font = 'italic ' + size + 'px ' + face;
-          }
-          ctx.fillStyle = ctx.strokeStyle;
-          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.fillText(name, rect.width / 2, rect.height / 2);
-          ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
-          hasSigned = true;
-          commit();
-          return true;
-        }
-        if (hint && printName) {
-          const typed = document.createElement('button');
-          typed.type = 'button';
-          typed.className = 'sig-typed-btn';
-          typed.textContent = "Can't draw? Use your typed name as your signature";
-          typed.addEventListener('click', function () {
-            const pn = document.querySelector('[name="' + printName + '"]');
-            if (!pn || !pn.value.trim()) {
-              alert('Enter your full legal name in "Print Name" first, then tap this again.');
-              if (pn) pn.focus();
-              return;
-            }
-            adoptTyped(pn.value);
-          });
-          hint.insertAdjacentElement('afterend', typed);
-        }
-        return api;
+      const form = document.getElementById('appForm');
+      if (!form) return;
+      function today() {
+        const d = new Date();
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
       }
-
-      const primary = initSignaturePad('signatureCanvas', 'signatureData', 'clearSigBtn', 'signatureDate', 'signature_print_name');
-      const secondary = initSignaturePad('signatureCanvas1', 'signatureData1', 'clearSigBtn1', 'signatureDate1', 'owner_1_signature_print_name');
-      window.__primarySignaturePad = primary;
-      window.__owner1SignaturePad = secondary;
+      function val(name) {
+        const el = form.querySelector('[name="' + name + '"]');
+        return el ? (el.value || '').trim() : '';
+      }
+      function render(block) {
+        const name = block.querySelector('.adopt-name').value.trim();
+        block.querySelectorAll('.sig-preview').forEach(p => { p.textContent = name || 'Your Name'; fit(p); });
+        block.classList.toggle('has-name', !!name);
+      }
+      // Shrink a preview until the whole name shows: a long name on a phone
+      // must never lose its last letters, or the applicant cannot see what
+      // they are adopting.
+      function fit(p) {
+        p.style.fontSize = '';
+        if (!p.clientWidth) return;   // page not visible yet; refit on sync()
+        let size = parseFloat(getComputedStyle(p).fontSize);
+        while (size > 14 && p.scrollWidth > p.clientWidth) { size -= 1; p.style.fontSize = size + 'px'; }
+      }
+      function sync(block) {
+        const owner = block.dataset.owner;
+        const nameEl = block.querySelector('.adopt-name');
+        const dateEl = block.querySelector('.adopt-date');
+        if (nameEl.disabled) return;
+        if (!nameEl.value.trim()) {
+          const full = (val(owner + '_first') + ' ' + val(owner + '_last')).trim();
+          if (full) nameEl.value = full;
+        }
+        if (dateEl && !dateEl.value) dateEl.value = today();
+        const radios = block.querySelectorAll('input[type=radio]');
+        if (radios.length && !Array.from(radios).some(r => r.checked)) radios[0].checked = true;
+        render(block);
+      }
+      const blocks = Array.from(document.querySelectorAll('.adopt-sig'));
+      blocks.forEach(block => {
+        block.querySelector('.adopt-name').addEventListener('input', () => render(block));
+        const d = block.querySelector('.adopt-date');
+        if (d && !d.value) d.value = today();
+        render(block);
+      });
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => blocks.forEach(render));
+      window.__adoptSignatureSync = function (owner, enabled) {
+        if (!owner || enabled === false) return;
+        blocks.filter(b => b.dataset.owner === owner).forEach(sync);
+      };
     })();
   </script>
 </body>
