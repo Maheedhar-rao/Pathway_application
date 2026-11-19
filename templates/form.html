@@ -446,45 +446,47 @@
           </div>
 
           <div id="owner1Section" style="display:none;">
+            {# Required only in effect with "Yes": with "No" the whole section is
+               disabled (updateOwner1), and disabled fields are never validated. #}
             <div class="section-title"><span class="dot"></span><h3>Second Owner — Personal &amp; Ownership</h3></div>
             <div class="grid cols-3">
               <div class="field"><label>First Name</label>
-                <input name="owner_1_first" value="{{ (form.get('owner_1_first') if form else '') }}" /></div>
+                <input name="owner_1_first" value="{{ (form.get('owner_1_first') if form else '') }}" required /></div>
               <div class="field"><label>Last Name</label>
-                <input name="owner_1_last" value="{{ (form.get('owner_1_last') if form else '') }}" /></div>
+                <input name="owner_1_last" value="{{ (form.get('owner_1_last') if form else '') }}" required /></div>
               <div class="field"><label>Ownership %</label>
                 <input type="number" name="owner_1_pct" min="0" max="100" step="0.1"
-                       value="{{ (form.get('owner_1_pct') if form else '') }}" /></div>
+                       value="{{ (form.get('owner_1_pct') if form else '') }}" required /></div>
               <div class="field"><label>Date of Birth</label>
-                <input type="date" name="owner_1_dob" value="{{ (form.get('owner_1_dob') if form else '') }}" /></div>
+                <input type="date" name="owner_1_dob" value="{{ (form.get('owner_1_dob') if form else '') }}" required /></div>
               <div class="field"><label>SSN</label>
                 <input name="owner_1_ssn" placeholder="123-45-6789"
                        value="{{ (form.get('owner_1_ssn') if form else '') }}"
-                       autocomplete="new-password" inputmode="numeric" /></div>
+                       autocomplete="new-password" inputmode="numeric" required /></div>
               <div class="field"><label>Email</label>
                 <input type="email" name="owner_1_email"
-                       value="{{ (form.get('owner_1_email') if form else '') }}" autocomplete="off" /></div>
+                       value="{{ (form.get('owner_1_email') if form else '') }}" autocomplete="off" required /></div>
               <div class="field"><label>Mobile</label>
                 <input name="owner_1_mobile" placeholder="(555) 555-5555"
-                       value="{{ (form.get('owner_1_mobile') if form else '') }}" /></div>
+                       value="{{ (form.get('owner_1_mobile') if form else '') }}" required /></div>
             </div>
 
             <div class="section-title"><span class="dot"></span><h3>Second Owner — Home Address</h3></div>
             <div class="grid cols-3">
               <div class="field"><label>Street</label>
                 <input name="owner_1_addr1" list="addr_suggestions" autocomplete="street-address"
-                       value="{{ (form.get('owner_1_addr1') if form else '') }}" /></div>
+                       value="{{ (form.get('owner_1_addr1') if form else '') }}" required /></div>
               <div class="field"><label>&nbsp;</label>
                 <input name="owner_1_addr2" placeholder="Suite / Apt"
                        value="{{ (form.get('owner_1_addr2') if form else '') }}" /></div>
               <div class="field"><label>City</label>
                 <input name="owner_1_city" autocomplete="address-level2"
-                       value="{{ (form.get('owner_1_city') if form else '') }}" /></div>
+                       value="{{ (form.get('owner_1_city') if form else '') }}" required /></div>
               <div class="field"><label>State</label>
-                {{ state_select('owner_1_state', form.get('owner_1_state') if form else '') }}</div>
+                {{ state_select('owner_1_state', form.get('owner_1_state') if form else '', required=True) }}</div>
               <div class="field"><label>ZIP</label>
                 <input name="owner_1_zip" autocomplete="postal-code"
-                       value="{{ (form.get('owner_1_zip') if form else '') }}" /></div>
+                       value="{{ (form.get('owner_1_zip') if form else '') }}" required /></div>
               <div class="field"><label>Country</label>
                 <input name="owner_1_country" value="{{ (form.get('owner_1_country') if form else 'United States') }}" /></div>
             </div>
