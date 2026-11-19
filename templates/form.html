@@ -909,7 +909,8 @@
       // they typed is kept on THIS device only (localStorage, never sent
       // anywhere) and put back after the reset above.
       //
-      // Never kept: SSN, date of birth, EIN, signatures, the consent boxes,
+      // Never kept: SSN, date of birth, EIN, the adopted signature (name,
+      // style and date -- it is re-adopted each time), the consent boxes,
       // files, and hidden fields (CSRF token, rep link, submission id). Those
       // are re-entered, and the page validation asks for them on the way
       // through. The draft expires after DRAFT_TTL_MS and is cleared on a
@@ -917,7 +918,7 @@
       // keep one applicant's details for the next.
       const DRAFT_KEY = 'pathway_form_draft_v1';
       const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
-      const NEVER_SAVE = /(^|_)(ssn|dob|ein)$|signature_data$|signature_date$|consent$/;
+      const NEVER_SAVE = /(^|_)(ssn|dob|ein)$|signature_(data|date|print_name|font)$|consent$/;
 
       function savable(el) {
         if (!el.name || el.disabled) return false;
@@ -1030,9 +1031,11 @@
 
     // ── Adopted signature (see the adopt_signature macro) ──
     // The signature is the typed legal name in the chosen script style. This
-    // only keeps the previews in step with the name, fills today's date and
-    // the owner's name when the page opens, and makes sure a style is always
-    // picked -- so a signature exists the moment the name does.
+    // keeps the previews in step with the name, fills today's date, and makes
+    // sure a style is always picked -- so a signature exists the moment the
+    // name does. The name follows the owner's first/last name (page 1 for the
+    // primary owner, page 4 for the second) until the applicant edits it
+    // themselves; from then on it is theirs and is never overwritten.
     (function () {
       const form = document.getElementById('appForm');
       if (!form) return;
@@ -1058,15 +1061,22 @@
         let size = parseFloat(getComputedStyle(p).fontSize);
         while (size > 14 && p.scrollWidth > p.clientWidth) { size -= 1; p.style.fontSize = size + 'px'; }
       }
-      function sync(block) {
+      function ownerName(block) {
         const owner = block.dataset.owner;
+        return (val(owner + '_first') + ' ' + val(owner + '_last')).trim();
+      }
+      function follow(block) {
+        const nameEl = block.querySelector('.adopt-name');
+        if (nameEl.disabled || block.dataset.auto !== '1') return;
+        const full = ownerName(block);
+        if (full) nameEl.value = full;
+      }
+      function sync(block) {
         const nameEl = block.querySelector('.adopt-name');
         const dateEl = block.querySelector('.adopt-date');
         if (nameEl.disabled) return;
-        if (!nameEl.value.trim()) {
-          const full = (val(owner + '_first') + ' ' + val(owner + '_last')).trim();
-          if (full) nameEl.value = full;
-        }
+        if (!nameEl.value.trim()) block.dataset.auto = '1';
+        follow(block);
         if (dateEl && !dateEl.value) dateEl.value = today();
         const radios = block.querySelectorAll('input[type=radio]');
         if (radios.length && !Array.from(radios).some(r => r.checked)) radios[0].checked = true;
@@ -1074,12 +1084,30 @@
       }
       const blocks = Array.from(document.querySelectorAll('.adopt-sig'));
       blocks.forEach(block => {
-        block.querySelector('.adopt-name').addEventListener('input', () => render(block));
+        const nameEl = block.querySelector('.adopt-name');
+        // Following the owner's name until the applicant types here; clearing
+        // the field hands it back to following.
+        block.dataset.auto = nameEl.value.trim() ? '0' : '1';
+        nameEl.addEventListener('input', () => {
+          block.dataset.auto = nameEl.value.trim() ? '0' : '1';
+          render(block);
+        });
+        ['_first', '_last'].forEach(suffix => {
+          const src = form.querySelector('[name="' + block.dataset.owner + suffix + '"]');
+          if (src) src.addEventListener('input', () => { follow(block); render(block); });
+        });
         const d = block.querySelector('.adopt-date');
         if (d && !d.value) d.value = today();
         render(block);
       });
       if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => blocks.forEach(render));
+      // Rotation or resize changes the room a preview has; refit so the whole
+      // name stays visible.
+      let refitTimer = null;
+      window.addEventListener('resize', () => {
+        clearTimeout(refitTimer);
+        refitTimer = setTimeout(() => blocks.forEach(render), 150);
+      });
       window.__adoptSignatureSync = function (owner, enabled) {
         if (!owner || enabled === false) return;
         blocks.filter(b => b.dataset.owner === owner).forEach(sync);

@@ -763,17 +763,16 @@ def attach_visit_to_application(visit_id: Optional[str], sid: int) -> None:
 
 
 def log_signature_adoptions(form: dict, application_id: int, visit_id: Optional[str]) -> None:
-    """Audit row per adopted signature, the CrocSign pattern: who adopted which
-    name in which style, from where (log_event adds ip and user agent). The
-    name is recorded because it IS the signature -- it is what the applicant
-    signed with, and the record of a signature has to say what it was."""
+    """Audit row per adopted signature, the CrocSign pattern: which owner
+    adopted a signature in which style, on what date, from where (log_event
+    adds ip and user agent). The name itself stays on the application record,
+    not in the trail -- audit payloads carry metadata, never what was typed."""
     owners = [("signature", 0)]
     if (form.get("has_owner_1") or "No").strip() == "Yes":
         owners.append(("owner_1_signature", 1))
     for prefix, owner in owners:
         log_event("signature_adopted", application_id=application_id, visit_id=visit_id,
                   payload={"owner": owner, "method": "typed",
-                           "name": (form.get(prefix + "_print_name") or "")[:120],
                            "font": signature_font(form.get(prefix + "_font")),
                            "date": form.get(prefix + "_date") or None})
 
@@ -1032,8 +1031,10 @@ def _sig_pdf_font(style: str) -> Optional[str]:
     try:
         pdfmetrics.registerFont(TTFont(pdf_name, str(APP_DIR / "static" / "fonts" / file_name)))
     except Exception:
-        log.exception("Could not load signature font %s", file_name)
-        return None
+        # A missing or unreadable font file must not turn into an unsigned
+        # PDF: the signature still prints, in a standard italic face.
+        log.exception("Could not load signature font %s; using Helvetica-Oblique", file_name)
+        pdf_name = "Helvetica-Oblique"
     _registered_sig_fonts[style] = pdf_name
     return pdf_name
 
@@ -1045,20 +1046,23 @@ def _adopted_signature_flowables(name: str, style: str, label: str, label_style)
     if not name:
         return []
     pdf_font = _sig_pdf_font(style)
-    if not pdf_font:
-        return []
     from reportlab.pdfbase import pdfmetrics
+    # Shrink to fit one line inside the page's text frame (7.3in wide): a long
+    # legal name must stay on its signature line, never wrap or run off the page.
     size = 30
     max_w = 3.6 * inch
     while size > 14 and pdfmetrics.stringWidth(name, pdf_font, size) > max_w:
         size -= 1
+    frame_w = 7.0 * inch
+    while size > 6 and pdfmetrics.stringWidth(name, pdf_font, size) > frame_w:
+        size -= 0.5
     sig_style = ParagraphStyle("AdoptedSig", fontName=pdf_font, fontSize=size,
                                leading=size * 1.25, textColor=BRAND_DARK)
     width = pdfmetrics.stringWidth(name, pdf_font, size)
     return [
         Spacer(1, 6),
         Paragraph(xml_escape(name), sig_style),
-        HRFlowable(width=max(width, 2.8 * inch), thickness=0.5, color=BRAND_DARK,
+        HRFlowable(width=min(max(width, 2.8 * inch), frame_w), thickness=0.5, color=BRAND_DARK,
                    hAlign="LEFT", spaceBefore=0, spaceAfter=4),
         Paragraph(label, label_style),
     ]
@@ -1069,6 +1073,11 @@ def _signature_block(form_data: dict, prefix: str, label: str, label_style) -> l
     before the drawing pad was retired, so their PDFs still render as signed."""
     if form_data.get(prefix + "_data"):
         return _signature_flowables(form_data[prefix + "_data"], label, label_style)
+    # No style recorded means no signature was adopted (an older application
+    # whose pad was empty): print nothing rather than invent a signature from
+    # the printed name.
+    if not form_data.get(prefix + "_font"):
+        return []
     return _adopted_signature_flowables(form_data.get(prefix + "_print_name", ""),
                                         form_data.get(prefix + "_font", ""), label, label_style)
 

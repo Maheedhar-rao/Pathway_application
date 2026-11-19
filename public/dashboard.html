@@ -478,7 +478,7 @@
     const bits = [];
     if (p.step) bits.push('step ' + p.step);
     if (p.field) bits.push(p.field + (p.reason ? ' (' + p.reason + ')' : ''));
-    if (p.font) bits.push((p.owner ? 'second owner: ' : '') + (p.name || '') + ' in ' + p.font);
+    if (p.font) bits.push((p.owner ? 'second owner, ' : '') + 'style: ' + p.font);
     if (p.client_name) bits.push(p.client_name);
     if (e.rep_code) bits.push('link: ' + e.rep_code);
     // Only a link that actually carried a code can have dropped one; a plain
