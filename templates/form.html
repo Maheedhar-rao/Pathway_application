@@ -597,6 +597,10 @@
             Next, we'll walk you through linking a credit account so we can run a
             <strong>soft credit pull</strong> (no score impact).
           </p>
+          <div id="uploadProblem" class="upload-msg upload-problem" role="alert" hidden>
+            <span class="upload-problem-text"></span>
+            <button type="button" class="upload-skip" id="skipUploadsBtn">Continue without them</button>
+          </div>
         </div>
         <div class="actions">
           <button type="button" class="btn ghost" data-nav="prev">Back</button>
@@ -609,6 +613,7 @@
   </main>
 
   <script src="{{ url_for('static', filename='form.js') }}"></script>
+  <script src="{{ url_for('static', filename='doc-upload.js') }}"></script>
   {% if plaid_enabled %}
   <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
   <script src="{{ url_for('static', filename='plaid-connect.js') }}"></script>
@@ -797,41 +802,48 @@
         });
       }
 
+      // Uploads go through the shared helper (static/doc-upload.js): batches
+      // under the server cap, and a per-file account of what was stored. The
+      // applicant only moves on once everything is saved -- otherwise they see
+      // which files did not go through, can try again, or choose to continue.
       function uploadDocuments() {
         var sid = window.__submissionId || document.getElementById('submissionId').value;
         if (!sid) { show(current + 1); return; }
-        var fd = new FormData();
+        var next = '{{ url_for("thank_you") }}?sid=' + sid;
         var bankInput = document.getElementById('bank-files-input');
         var idDoc = form.querySelector('input[name="id_doc"]');
         var voidedCheck = form.querySelector('input[name="voided_check"]');
-        var hasFiles = false;
-        if (bankInput && bankInput.files.length) {
-          for (var i = 0; i < bankInput.files.length; i++) {
-            fd.append('bank_files', bankInput.files[i]);
-            hasFiles = true;
-          }
-        }
-        if (idDoc && idDoc.files.length) { fd.append('id_doc', idDoc.files[0]); hasFiles = true; }
-        if (voidedCheck && voidedCheck.files.length) { fd.append('voided_check', voidedCheck.files[0]); hasFiles = true; }
-        if (!hasFiles) {
-          window.location.href = '{{ url_for("thank_you") }}?sid=' + sid;
-          return;
-        }
+        var entries = [];
+        if (bankInput) for (var i = 0; i < bankInput.files.length; i++) entries.push({ field: 'bank_files', file: bankInput.files[i] });
+        if (idDoc && idDoc.files.length) entries.push({ field: 'id_doc', file: idDoc.files[0] });
+        if (voidedCheck && voidedCheck.files.length) entries.push({ field: 'voided_check', file: voidedCheck.files[0] });
+        if (!entries.length) { window.location.href = next; return; }
+
+        var problem = document.getElementById('uploadProblem');
         var btn = document.getElementById('uploadDocsBtn');
+        problem.hidden = true;
         btn.disabled = true;
         btn.classList.add('loading');
-        fd.append('csrf_token', form.querySelector('input[name="csrf_token"]').value);
-        fetch('/upload-documents/' + sid, { method: 'POST', body: fd })
-          .then(function (r) { return r.json(); })
-          .then(function (data) {
+        window.uploadDocuments(sid, entries, form.querySelector('input[name="csrf_token"]').value)
+          .then(function (res) {
             btn.disabled = false;
             btn.classList.remove('loading');
-            window.location.href = '{{ url_for("thank_you") }}?sid=' + sid;
-          })
-          .catch(function () {
-            btn.disabled = false;
-            btn.classList.remove('loading');
-            window.location.href = '{{ url_for("thank_you") }}?sid=' + sid;
+            var left = res.failed.concat(res.tooBig);
+            if (!left.length) { window.location.href = next; return; }
+            // Keep only what still needs to go up, so "Try again" never
+            // re-sends a file that was already saved.
+            var keep = function (field) { return left.filter(function (e) { return e.field === field; }).map(function (e) { return e.file; }); };
+            if (window.__bankUploader) window.__bankUploader.setFiles(keep('bank_files'));
+            [idDoc, voidedCheck].forEach(function (input) {
+              if (input && !keep(input.name).length) input.value = '';
+            });
+            problem.querySelector('.upload-problem-text').textContent =
+              (res.saved.length ? res.saved.length + (res.saved.length === 1 ? ' file was' : ' files were') + ' saved. ' : '')
+              + window.describeUploadProblem(res);
+            problem.hidden = false;
+            btn.textContent = 'Try again';
+            document.getElementById('skipUploadsBtn').onclick = function () { window.location.href = next; };
+            problem.scrollIntoView({ behavior: 'smooth', block: 'center' });
           });
       }
 

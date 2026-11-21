@@ -314,6 +314,12 @@ tr:hover{background:rgba(255,255,255,.03)}
 }
 .upload-msg[hidden]{ display:none; }
 .uploader .upload-msg{ color:var(--danger); opacity:1; }
+.upload-problem{ margin-top:16px; display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
+.upload-skip{
+  background:none; border:0; padding:0;
+  color:var(--primary2); font-size:13px; font-weight:600;
+  text-decoration:underline; cursor:pointer;
+}
 
 .chip{
   display:inline-flex;
