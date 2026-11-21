@@ -2309,6 +2309,40 @@ def _store_file_bytes(sid: int, original: str, file_bytes: bytes, content_type: 
     return False
 
 
+_STATEMENT_PHOTO_EXT = (".jpg", ".jpeg", ".png", ".heic", ".heif")
+_STATEMENT_PHOTO_TYPES = {"image/jpeg", "image/png", "image/heic", "image/heif"}
+
+
+def _is_statement_photo(filename: str, content_type: Optional[str]) -> bool:
+    """Bank statements may arrive as photos of the pages. iPhones often send
+    HEIC with an empty or generic type, so the extension counts too."""
+    return ((content_type or "").lower() in _STATEMENT_PHOTO_TYPES
+            or (filename or "").lower().endswith(_STATEMENT_PHOTO_EXT))
+
+
+def _pdf_name(filename: str) -> str:
+    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    return (stem or "statement") + ".pdf"
+
+
+def _photo_to_pdf(data: bytes) -> bytes:
+    """One photo -> a one-page PDF. Honours the phone's rotation flag, and caps
+    the long edge so a 48 MP photo does not become a 20 MB page while the
+    print on a statement stays readable."""
+    from PIL import Image, ImageOps
+    try:
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+    except ImportError:
+        pass   # without it HEIC fails to open and is reported as failed
+    img = Image.open(BytesIO(data))
+    img = ImageOps.exif_transpose(img).convert("RGB")
+    img.thumbnail((2400, 2400))
+    out = BytesIO()
+    img.save(out, "PDF", resolution=200.0, quality=85)
+    return out.getvalue()
+
+
 def _process_uploads(sid: int, request_files) -> tuple[List[str], List[str], List[str]]:
     """Pull bank_files / processing_statements / voided_check / id_doc out of a
     Flask request.files and upload each. Returns (doc_types_saved,
@@ -2326,8 +2360,21 @@ def _process_uploads(sid: int, request_files) -> tuple[List[str], List[str], Lis
         for f in request_files.getlist(field):
             if not f or not f.filename:
                 continue
-            if _store_uploaded_file(sid, f, dtype, attached_paths, failed) \
-                    and dtype not in saved:
+            if _is_statement_photo(f.filename, f.content_type):
+                # A photo of a statement page becomes a one-page PDF, so the
+                # team, the email attachments and every downstream consumer
+                # keep receiving PDFs for statements.
+                try:
+                    pdf = _photo_to_pdf(f.read())
+                except Exception:
+                    log.exception("Could not convert statement photo %s for %s", f.filename, sid)
+                    failed.append(f.filename)
+                    continue
+                stored = _store_file_bytes(sid, _pdf_name(f.filename), pdf, "application/pdf",
+                                           dtype, attached_paths, failed)
+            else:
+                stored = _store_uploaded_file(sid, f, dtype, attached_paths, failed)
+            if stored and dtype not in saved:
                 saved.append(dtype)
 
     for field, dtype in [("voided_check", "voided_check"), ("id_doc", "id_doc")]:

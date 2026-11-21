@@ -19,3 +19,4 @@ tzdata
 # /archive/refs/tags/<tag>.tar.gz form installs over plain HTTPS and pins the
 # exact released ruleset.
 pathway-naics @ https://github.com/Maheedhar-rao/pathway-naics/archive/refs/tags/v0.3.0.tar.gz
+pillow-heif>=0.18   # HEIC (iPhone) photos of bank statements -> PDF
