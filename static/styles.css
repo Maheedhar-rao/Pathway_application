@@ -302,6 +302,19 @@ th,td{border-bottom:1px solid rgba(148,163,184,.18);padding:10px;text-align:left
 th{color:#cbd5e1}
 tr:hover{background:rgba(255,255,255,.03)}
 
+.upload-msg{
+  margin:10px 0 0;
+  padding:8px 12px;
+  border-radius:10px;
+  background:rgba(248,113,113,.10);
+  border:1px solid rgba(248,113,113,.35);
+  color:var(--danger);
+  font-size:13px;
+  line-height:1.4;
+}
+.upload-msg[hidden]{ display:none; }
+.uploader .upload-msg{ color:var(--danger); opacity:1; }
+
 .chip{
   display:inline-flex;
   gap:6px;

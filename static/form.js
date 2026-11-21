@@ -174,10 +174,25 @@
 
     const files = [];
     const keyOf = (f) => f.name + '::' + f.size;
-    function isPdf(f) {
-      if (f.type === 'application/pdf') return true;
-      if (!f.type && /\.pdf$/i.test(f.name)) return true;
-      return false;
+    // PDFs, or photos of the pages: the server turns each photo into a PDF,
+    // so everything downstream still receives PDFs. iPhones often hand over
+    // HEIC with an empty or generic type, hence the extension check.
+    const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/heif'];
+    const ALLOWED_EXT = /\.(pdf|jpe?g|png|heic|heif)$/i;
+    function isAllowed(f) {
+      return ALLOWED_TYPES.indexOf(f.type) !== -1 || ALLOWED_EXT.test(f.name);
+    }
+    // Say what was turned away and why, instead of a file silently not
+    // appearing -- the applicant would otherwise think it was added.
+    const msgEl = document.getElementById('bank-files-msg');
+    function showRejected(names) {
+      if (!msgEl) return;
+      if (!names.length) { msgEl.hidden = true; msgEl.textContent = ''; return; }
+      const list = names.length === 1 ? '"' + names[0] + '" wasn\'t added'
+        : names.length + ' files weren\'t added (' + names.slice(0, 3).map((n) => '"' + n + '"').join(', ')
+          + (names.length > 3 ? ', …' : '') + ')';
+      msgEl.textContent = list + '. Bank statements can be PDFs or photos (JPG, PNG or HEIC).';
+      msgEl.hidden = false;
     }
     function escapeHtml(s) {
       return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
@@ -207,14 +222,16 @@
     function addFiles(incoming) {
       const have = {};
       files.forEach((f) => { have[keyOf(f)] = true; });
+      const rejected = [];
       for (let i = 0; i < incoming.length; i++) {
         const f = incoming[i];
-        if (!isPdf(f)) continue;
+        if (!isAllowed(f)) { rejected.push(f.name); continue; }
         const k = keyOf(f);
         if (have[k]) continue;
         files.push(f);
         have[k] = true;
       }
+      showRejected(rejected);
       sync();
     }
 

@@ -563,15 +563,16 @@
             <button type="button" class="btn primary plaid-btn">Connect your bank</button>
             <p class="plaid-status" role="status" aria-live="polite"></p>
           </div>
-          <div class="plaid-or">or upload PDFs</div>
+          <div class="plaid-or">or upload your statements</div>
           {% endif %}
 
           <div class="field" style="margin-bottom:16px;">
-            <label>4 Months Business Bank Statements (PDF)</label>
+            <label>4 Months Business Bank Statements</label>
             <div class="uploader" id="bank-uploader" style="padding:16px;">
-              <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Add PDFs one at a time or all at once — drag &amp; drop works too.</p>
-              <input type="file" id="bank-files-input" name="bank_files" accept="application/pdf" multiple />
+              <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">PDFs or photos of each page (JPG, PNG, HEIC). Add them one at a time or all at once — drag &amp; drop works too.</p>
+              <input type="file" id="bank-files-input" name="bank_files" accept="application/pdf,image/jpeg,image/png,image/heic,image/heif,.pdf,.jpg,.jpeg,.png,.heic,.heif" multiple />
               <div id="bank-files-list" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center;"></div>
+              <p id="bank-files-msg" class="upload-msg" role="alert" hidden></p>
             </div>
           </div>
 

@@ -65,11 +65,12 @@
         </div>
 
         <div id="bank-pdfs">
-          <div class="plaid-or">or upload PDFs</div>
+          <div class="plaid-or">or upload your statements</div>
           <div class="field" style="margin-bottom:16px;">
-            <label>4 Months Business Bank Statements (PDF)</label>
+            <label>4 Months Business Bank Statements</label>
             <div class="uploader" style="padding:16px;">
-              <input type="file" name="bank_files" accept="application/pdf" multiple />
+              <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">PDFs or photos of each page (JPG, PNG, HEIC).</p>
+              <input type="file" name="bank_files" accept="application/pdf,image/jpeg,image/png,image/heic,image/heif,.pdf,.jpg,.jpeg,.png,.heic,.heif" multiple />
             </div>
           </div>
         </div>
