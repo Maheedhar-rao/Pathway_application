@@ -2370,8 +2370,14 @@ def _process_uploads(sid: int, request_files) -> tuple[List[str], List[str], Lis
                     log.exception("Could not convert statement photo %s for %s", f.filename, sid)
                     failed.append(f.filename)
                     continue
+                # Report a storage failure under the name the applicant picked
+                # (IMG_0042.HEIC), not the converted one, so the page can
+                # tell them which of their files did not go through.
+                store_failed: List[str] = []
                 stored = _store_file_bytes(sid, _pdf_name(f.filename), pdf, "application/pdf",
-                                           dtype, attached_paths, failed)
+                                           dtype, attached_paths, store_failed)
+                if store_failed:
+                    failed.append(f.filename)
             else:
                 stored = _store_uploaded_file(sid, f, dtype, attached_paths, failed)
             if stored and dtype not in saved:
@@ -2799,6 +2805,16 @@ def partner_submission_lookup():
     if sid is None:
         return jsonify(submission_id=None), 404
     return jsonify(submission_id=sid)
+
+
+@app.errorhandler(413)
+def request_too_large(_e):
+    """Over MAX_CONTENT_LENGTH. The upload pages read JSON, so they get JSON
+    and can tell the applicant -- an HTML error page used to read as success."""
+    if request.path.startswith("/upload-documents/"):
+        return jsonify(success=False, error="too_large",
+                       limit_mb=app.config["MAX_CONTENT_LENGTH"] // (1024 * 1024)), 413
+    return "Upload too large", 413
 
 
 @app.route("/upload-documents/<int:sid>", methods=["POST"])

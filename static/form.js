@@ -235,6 +235,11 @@
       sync();
     }
 
+    // After a partial upload the page keeps only the files still to send.
+    window.__bankUploader = {
+      setFiles(list) { files.length = 0; (list || []).forEach((f) => files.push(f)); showRejected([]); sync(); },
+    };
+
     input.addEventListener('change', () => addFiles(Array.prototype.slice.call(input.files || [])));
     ['dragenter','dragover'].forEach((ev) => {
       drop.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); drop.classList.add('drag-over'); });
